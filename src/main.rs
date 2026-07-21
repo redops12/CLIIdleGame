@@ -10,8 +10,15 @@ use ratatui::{DefaultTerminal, Frame};
 use std::collections::HashMap;
 use std::time::Duration;
 
+use logging::{info, warn, error, debug};
+
+fn init_logging() {
+    logging::root().add_handler(logging::FileHandler::new("game.log"));
+}
+
 struct Game {
     counts: HashMap<String, u32>,
+    typed: Vec<String>,
 }
 
 const WASTELAND: &str = include_str!("../assets/wasteland.txt");
@@ -20,11 +27,34 @@ impl Game {
     fn new() -> Self {
         Self {
             counts: HashMap::new(),
+            typed: Vec::new(),
         }
     }
 
     fn increment(&mut self, key: &str) {
         *self.counts.entry(key.to_string()).or_insert(0) += 1;
+    }
+
+    fn input(&mut self, key: KeyCode) {
+        logging::debug(&format!("Input received: {key}"));
+        match key {
+            KeyCode::Char(c) => {
+                if let Some(last) = self.typed.last_mut() {
+                    last.push(c);
+                } else {
+                    self.typed.push(c.to_string());
+                }
+            }
+            KeyCode::Enter => {
+                self.typed.push(String::new());
+            }
+            KeyCode::Backspace => {
+                if let Some(last) = self.typed.last_mut() {
+                    last.pop();
+                }
+            }
+            _ => {}
+        }
     }
 }
 
@@ -50,8 +80,9 @@ impl App {
             KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.should_quit = true;
             }
-            KeyCode::Char(c) => {
+            c => {
                 self.game.increment(&c.to_string());
+                self.game.input(c);
             }
             _ => {}
         }
@@ -60,14 +91,32 @@ impl App {
 
 fn ui(frame: &mut Frame, app: &App) {
     let chunks = Layout::horizontal([
-        Constraint::Length(26),
-        Constraint::Min(5),
-        Constraint::Length(3),
-        Constraint::Length(1),
+        Constraint::Percentage(50),
+        Constraint::Min(2),
     ])
     .split(frame.area());
+
+    let mut rendered_text = vec![];
+
+    for (reference_idx, reference) in WASTELAND.lines().enumerate() {
+        let temp_line = String::new();
+        let typed_line = app.game.typed.get(reference_idx).unwrap_or(&temp_line);
+        let typed_chars: Vec<char> = typed_line.chars().collect();
+        let mut line = vec![];
+        for (i, e) in reference.chars().enumerate() {
+            let span = match typed_chars.get(i) {
+                Some(&c) if c == e => Span::styled(c.to_string(), Style::default().fg(Color::Green)),
+                Some(&c) if c != e => Span::styled(c.to_string(), Style::default().fg(Color::Red)),
+                Some(&_) => Span::styled(e.to_string(), Style::default().fg(Color::White)),
+                None => Span::styled(e.to_string(), Style::default().fg(Color::White)),
+            };
+            line.push(span);
+        }
+        rendered_text.push(Line::from(line));
+    }
+
     frame.render_widget(
-        Paragraph::new(format!("{}", WASTELAND))
+        Paragraph::new(rendered_text)
         .block(Block::default().borders(Borders::ALL).title("Key Counter")),
         chunks[0],
     );
@@ -97,8 +146,11 @@ fn run(terminal: &mut DefaultTerminal) -> io::Result<()> {
 }
 
 fn main() -> io::Result<()> {
+    init_logging();
+    logging::info("Starting Game");
     let mut terminal = ratatui::init();
     let result = run(&mut terminal);
     ratatui::restore();
+    logging::info("Exiting Game");
     result
 }

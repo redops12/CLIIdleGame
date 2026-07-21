@@ -6,4 +6,5 @@ edition = "2024"
 [dependencies]
 crossterm = "0.29.0"
 io = "0.0.2"
+logging = "0.1.0"
 ratatui = "0.30.2"
