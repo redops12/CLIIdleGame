@@ -106,11 +106,21 @@ fn ui(frame: &mut Frame, app: &App) {
         for (i, e) in reference.chars().enumerate() {
             let span = match typed_chars.get(i) {
                 Some(&c) if c == e => Span::styled(c.to_string(), Style::default().fg(Color::Green)),
-                Some(&c) if c != e => Span::styled(c.to_string(), Style::default().fg(Color::Red)),
+                Some(&c) if c != e && !c.is_whitespace() => Span::styled(c.to_string(), Style::default().fg(Color::Red)),
+                Some(&c) if c != e && c.is_whitespace() => Span::styled(c.to_string(), Style::default().bg(Color::Red)),
                 Some(&_) => Span::styled(e.to_string(), Style::default().fg(Color::White)),
                 None => Span::styled(e.to_string(), Style::default().fg(Color::White)),
             };
             line.push(span);
+        }
+        for (_, c) in typed_chars.iter().enumerate().skip(reference.len()) {
+            if c.is_whitespace() {
+                let span = Span::styled(c.to_string(), Style::default().bg(Color::Red));
+                line.push(span);
+            } else {
+                let span = Span::styled(c.to_string(), Style::default().fg(Color::Red));
+                line.push(span);
+            }
         }
         rendered_text.push(Line::from(line));
     }
