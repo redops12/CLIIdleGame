@@ -1,6 +1,6 @@
 #[allow(dead_code)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-struct BigNumber {
+pub struct BigNumber {
     /// Significand with up to 9 digits. For `power_3 >= 1`, display is
     /// `amount / 1_000` with 3 digits after the decimal.
     amount: i64,
@@ -77,7 +77,54 @@ impl From<i32> for BigNumber {
     }
 }
 
+use std::cmp::Ordering;
 use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Sub, SubAssign};
+
+impl PartialOrd for BigNumber {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for BigNumber {
+    fn cmp(&self, other: &Self) -> Ordering {
+        // negative < zero < positive
+        let self_sign = self.amount.cmp(&0);
+        let other_sign = other.amount.cmp(&0);
+        if self_sign != other_sign {
+            return self_sign.cmp(&other_sign);
+        }
+        if self.amount == 0 {
+            return Ordering::Equal;
+        }
+
+        let magnitude = match self.scale().cmp(&other.scale()) {
+            Ordering::Greater => {
+                let diff = self.scale() - other.scale();
+                if diff >= 2 {
+                    Ordering::Greater
+                } else {
+                    (self.amount.abs() * UNIT).cmp(&other.amount.abs())
+                }
+            }
+            Ordering::Less => {
+                let diff = other.scale() - self.scale();
+                if diff >= 2 {
+                    Ordering::Less
+                } else {
+                    self.amount.abs().cmp(&(other.amount.abs() * UNIT))
+                }
+            }
+            Ordering::Equal => self.amount.abs().cmp(&other.amount.abs()),
+        };
+
+        if self.amount < 0 {
+            magnitude.reverse()
+        } else {
+            magnitude
+        }
+    }
+}
 
 impl Add for BigNumber {
     type Output = Self;
@@ -147,6 +194,24 @@ impl MulAssign<i32> for BigNumber {
     }
 }
 
+impl Mul<f32> for BigNumber {
+    type Output = Self;
+
+    fn mul(self, rhs: f32) -> Self {
+        BigNumber {
+            amount: ((self.amount as f32) * rhs).round() as i64,
+            power_3: self.power_3,
+        }
+        .reduce()
+    }
+}
+
+impl MulAssign<f32> for BigNumber {
+    fn mul_assign(&mut self, rhs: f32) {
+        *self = *self * rhs;
+    }
+}
+
 impl Div<i32> for BigNumber {
     type Output = Self;
 
@@ -164,6 +229,189 @@ impl Div<i32> for BigNumber {
 impl DivAssign<i32> for BigNumber {
     fn div_assign(&mut self, rhs: i32) {
         *self = *self / rhs;
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct BigDollar(BigNumber);
+
+impl std::ops::Deref for BigDollar {
+    type Target = BigNumber;
+    fn deref(&self) -> &BigNumber {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for BigDollar {
+    fn deref_mut(&mut self) -> &mut BigNumber {
+        &mut self.0
+    }
+}
+
+impl From<BigNumber> for BigDollar {
+    fn from(value: BigNumber) -> Self {
+        BigDollar(value)
+    }
+}
+
+impl From<i64> for BigDollar {
+    fn from(value: i64) -> Self {
+        BigDollar(BigNumber::from(value))
+    }
+}
+
+impl From<i32> for BigDollar {
+    fn from(value: i32) -> Self {
+        BigDollar(BigNumber::from(value))
+    }
+}
+
+impl std::fmt::Display for BigDollar {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let body = self.0.to_string();
+        if let Some(rest) = body.strip_prefix('-') {
+            write!(f, "-${rest}")
+        } else {
+            write!(f, "${body}")
+        }
+    }
+}
+
+impl Add for BigDollar {
+    type Output = Self;
+
+    fn add(self, other: Self) -> Self {
+        BigDollar(self.0 + other.0)
+    }
+}
+
+impl Add<i64> for BigDollar {
+    type Output = Self;
+
+    fn add(self, other: i64) -> Self {
+        self + BigDollar::from(other)
+    }
+}
+
+impl Add<i32> for BigDollar {
+    type Output = Self;
+
+    fn add(self, other: i32) -> Self {
+        self + BigDollar::from(other)
+    }
+}
+
+impl AddAssign for BigDollar {
+    fn add_assign(&mut self, other: Self) {
+        self.0 += other.0;
+    }
+}
+
+impl AddAssign<i64> for BigDollar {
+    fn add_assign(&mut self, other: i64) {
+        *self += BigDollar::from(other);
+    }
+}
+
+impl AddAssign<i32> for BigDollar {
+    fn add_assign(&mut self, other: i32) {
+        *self += BigDollar::from(other);
+    }
+}
+
+impl Sub for BigDollar {
+    type Output = Self;
+
+    fn sub(self, other: Self) -> Self {
+        BigDollar(self.0 - other.0)
+    }
+}
+
+impl Sub<i64> for BigDollar {
+    type Output = Self;
+
+    fn sub(self, other: i64) -> Self {
+        self - BigDollar::from(other)
+    }
+}
+
+impl Sub<i32> for BigDollar {
+    type Output = Self;
+
+    fn sub(self, other: i32) -> Self {
+        self - BigDollar::from(other)
+    }
+}
+
+impl SubAssign for BigDollar {
+    fn sub_assign(&mut self, other: Self) {
+        self.0 -= other.0;
+    }
+}
+
+impl SubAssign<i64> for BigDollar {
+    fn sub_assign(&mut self, other: i64) {
+        *self -= BigDollar::from(other);
+    }
+}
+
+impl SubAssign<i32> for BigDollar {
+    fn sub_assign(&mut self, other: i32) {
+        *self -= BigDollar::from(other);
+    }
+}
+
+impl Mul<i32> for BigDollar {
+    type Output = Self;
+
+    fn mul(self, rhs: i32) -> Self {
+        BigDollar(self.0 * rhs)
+    }
+}
+
+impl MulAssign<i32> for BigDollar {
+    fn mul_assign(&mut self, rhs: i32) {
+        self.0 *= rhs;
+    }
+}
+
+impl Mul<f32> for BigDollar {
+    type Output = Self;
+
+    fn mul(self, rhs: f32) -> Self {
+        BigDollar(self.0 * rhs)
+    }
+}
+
+impl MulAssign<f32> for BigDollar {
+    fn mul_assign(&mut self, rhs: f32) {
+        self.0 *= rhs;
+    }
+}
+
+impl Div<i32> for BigDollar {
+    type Output = Self;
+
+    fn div(self, rhs: i32) -> Self {
+        BigDollar(self.0 / rhs)
+    }
+}
+
+impl DivAssign<i32> for BigDollar {
+    fn div_assign(&mut self, rhs: i32) {
+        self.0 /= rhs;
+    }
+}
+
+impl PartialOrd for BigDollar {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for BigDollar {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.0.cmp(&other.0)
     }
 }
 
@@ -341,5 +589,75 @@ mod tests {
         let mut n = BigNumber::new(8_000_000, 1);
         n /= 4;
         assert_eq!(n, BigNumber::new(2_000_000, 1));
+    }
+
+    #[test]
+    fn big_dollar_from_ints_and_display() {
+        assert_eq!(BigDollar::from(0).to_string(), "$0");
+        assert_eq!(BigDollar::from(42_i32).to_string(), "$42");
+        assert_eq!(BigDollar::from(1_500_000_i64).to_string(), "$1.500 M");
+        assert_eq!(BigDollar::from(-7_i32).to_string(), "-$7");
+    }
+
+    #[test]
+    fn big_dollar_ops_forward_to_big_number() {
+        let mut money = BigDollar::from(1_000);
+        money += 500_i64;
+        assert_eq!(money, BigDollar::from(1_500));
+
+        money -= 200_i32;
+        assert_eq!(money, BigDollar::from(1_300));
+
+        money = money + BigDollar::from(200);
+        assert_eq!(money, BigDollar::from(1_500));
+
+        money = money * 2;
+        assert_eq!(money.to_string(), "$3000");
+
+        money /= 3;
+        assert_eq!(money, BigDollar::from(1_000));
+    }
+
+    #[test]
+    fn big_number_cmp_same_scale() {
+        assert!(BigNumber::from(10) < BigNumber::from(20));
+        assert!(BigNumber::from(20) > BigNumber::from(10));
+        assert!(BigNumber::from(10) <= BigNumber::from(10));
+        assert!(BigNumber::from(10) >= BigNumber::from(10));
+        assert_eq!(BigNumber::from(10), BigNumber::from(10));
+        assert!(BigNumber::from(-5) < BigNumber::from(3));
+        assert!(BigNumber::from(-10) < BigNumber::from(-3));
+    }
+
+    #[test]
+    fn big_number_cmp_zero_against_nonzero() {
+        assert!(BigNumber::from(0) < BigNumber::from(100));
+        assert!(BigNumber::from(0) < BigNumber::from(1));
+        assert!(!(BigNumber::from(0) >= BigNumber::from(100)));
+        assert!(BigNumber::from(0) > BigNumber::from(-1));
+        assert!(BigDollar::from(0) < BigDollar::from(100));
+        assert!(!(BigDollar::from(0) >= BigDollar::from(100)));
+    }
+
+    #[test]
+    fn big_number_cmp_across_scales() {
+        let millions = BigNumber::new(1_500_000, 1);
+        let billions = BigNumber::new(2_000_000, 2);
+        let trillions = BigNumber::new(1_000_000, 3);
+
+        assert!(millions < billions);
+        assert!(billions < trillions);
+        assert!(millions < trillions);
+        assert!(BigNumber::new(-1_000_000, 3) < BigNumber::new(-1_500_000, 1));
+        assert!(BigNumber::from(999_999) < millions);
+    }
+
+    #[test]
+    fn big_dollar_cmp_matches_big_number() {
+        assert!(BigDollar::from(100) < BigDollar::from(200));
+        assert!(BigDollar::from(200) > BigDollar::from(100));
+        assert!(BigDollar::from(100) <= BigDollar::from(100));
+        assert_eq!(BigDollar::from(100), BigDollar::from(100));
+        assert!(BigDollar::from(-50) < BigDollar::from(0));
     }
 }

@@ -872,6 +872,8 @@ dependencies = [
  "io",
  "logging",
  "ratatui",
+ "strum",
+ "strum_macros",
 ]
 
 [[package]]
