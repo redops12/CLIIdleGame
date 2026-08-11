@@ -1,5 +1,7 @@
 use std::io;
 
+mod BigNum;
+
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::{Constraint, Layout};
 use ratatui::style::{Color, Style};
