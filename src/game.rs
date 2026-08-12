@@ -1,17 +1,20 @@
 use std::collections::HashMap;
 
-use crossterm::event::KeyCode;
+use crossbeam_channel::Receiver;
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use rand;
 
 use crate::BigNum::BigDollar;
 use crate::upgrade::{
-    GameValue, Upgrade, button_to_upgrade, game_value_start, initial_game_values, initial_upgrade_costs, upgrade_buttons, upgrade_multiplier, upgrade_starting_cost, upgrade_value_change, upgrade_value_key,
+    GameValue, Upgrade, button_to_upgrade, game_value_start, initial_game_values,
+    initial_upgrade_costs, upgrade_multiplier, upgrade_starting_cost, upgrade_value_change,
+    upgrade_value_key,
 };
 
 const WASTELAND: &str = include_str!("../assets/wasteland.txt");
 pub const NUM_LETTERS: usize = 26;
-pub const LETTER_QUEUE_HEIGHT: usize = 20;
+pub const LETTER_QUEUE_HEIGHT: usize = 10;
 
 pub enum WindowPanes {
     HelpPane,
@@ -21,6 +24,8 @@ pub enum WindowPanes {
 }
 
 pub struct Game {
+    input_rx: Receiver<KeyEvent>,
+    pub should_quit: bool,
     pub counts: HashMap<String, u32>,
 
     // currently typed string
@@ -48,8 +53,10 @@ pub struct Game {
 }
 
 impl Game {
-    pub fn new() -> Self {
+    pub fn new(input_rx: Receiver<KeyEvent>) -> Self {
         Self {
+            input_rx,
+            should_quit: false,
             counts: HashMap::new(),
             typed: String::new(),
             current_text: WASTELAND.split('\n').collect(),
@@ -179,37 +186,34 @@ impl Game {
         button_to_upgrade(key).map(|upgrade| self.buy_upgrade(upgrade));
     }
 
-    pub fn input(&mut self, key: KeyCode) {
-        logging::debug(&format!("Input received: {key}"));
-        if key == KeyCode::Tab {
-            self.toggle_upgrade_pane();
-            return;
-        }
-        match key {
-            KeyCode::Up => {
-                self.window_y = self.window_y.saturating_sub(1);
-            }
-            KeyCode::Down => {
-                self.window_y = self.window_y.saturating_add(1).min(1);
-            }
-            KeyCode::Left => {
-                self.window_x = self.window_x.saturating_sub(1);
-            }
-            KeyCode::Right => {
-                self.window_x = self.window_x.saturating_add(1).min(2);
-            }
-            _ => {}
-        }
-        self.recalculate_current_pane();
-        match self.current_pane {
-            WindowPanes::TextPane => self.text_pane_input(key),
-            WindowPanes::UpgradePane => self.upgrade_pane_input(key),
-            WindowPanes::AutoPane => {
-                if let KeyCode::Char(c) = key {
-                    self.increment(&c.to_string());
+    fn update_handle_inputs(&mut self) {
+        while let Ok(key) = self.input_rx.try_recv() {
+            match key.code {
+                KeyCode::Esc => self.should_quit = true,
+                KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    self.should_quit = true;
                 }
+                KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    self.should_quit = true;
+                }
+                KeyCode::Tab => self.toggle_upgrade_pane(),
+                KeyCode::Up => self.window_y = self.window_y.saturating_sub(1),
+                KeyCode::Down => self.window_y = self.window_y.saturating_add(1).min(1),
+                KeyCode::Left => self.window_x = self.window_x.saturating_sub(1),
+                KeyCode::Right => self.window_x = self.window_x.saturating_add(1).min(2),
+                _ => {}
             }
-            _ => {}
+            self.recalculate_current_pane();
+            match self.current_pane {
+                WindowPanes::TextPane => self.text_pane_input(key.code),
+                WindowPanes::UpgradePane => self.upgrade_pane_input(key.code),
+                WindowPanes::AutoPane => {
+                    if let KeyCode::Char(c) = key.code {
+                        self.increment(&c.to_string());
+                    }
+                }
+                _ => {}
+            }
         }
     }
 
@@ -217,13 +221,13 @@ impl Game {
         // clear out letters that have reached the bottom and have counts
         let mut money_change: BigDollar = BigDollar::from(0);
         for x in 0..NUM_LETTERS {
-            if self.letter_queue[x][19] {
+            if self.letter_queue[x][LETTER_QUEUE_HEIGHT - 1] {
                 let letter = (b'a' + x as u8) as char;
                 let count = self.counts.entry(letter.to_string()).or_insert(0);
                 if *count > 0 {
                     *count -= 1;
                     money_change += *self.game_values.get(&GameValue::Increment).unwrap();
-                    self.letter_queue[x][19] = false;
+                    self.letter_queue[x][LETTER_QUEUE_HEIGHT - 1] = false;
                 }
             }
         }
@@ -255,6 +259,7 @@ impl Game {
     }
 
     pub fn update(&mut self, now: std::time::Instant) {
+        self.update_handle_inputs();
         self.letter_queue_update(now);
     }
 }

@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 crossterm = "0.29.0"
+crossbeam-channel = "0.5.15"
 io = "0.0.2"
 logging = "0.1.0"
 rand = "0.10.2"
