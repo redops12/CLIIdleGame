@@ -36,6 +36,8 @@ pub struct Game {
     pub window_x: u16,
     pub window_y: u16,
     pub current_pane: WindowPanes,
+    previous_window_x: u16,
+    previous_window_y: u16,
 }
 
 impl Game {
@@ -51,6 +53,8 @@ impl Game {
             window_x: 1,
             window_y: 1,
             current_pane: WindowPanes::TextPane,
+            previous_window_x: 1,
+            previous_window_y: 1,
         }
     }
 
@@ -117,6 +121,23 @@ impl Game {
         };
     }
 
+    fn toggle_upgrade_pane(&mut self) {
+        self.recalculate_current_pane();
+        match self.current_pane {
+            WindowPanes::UpgradePane => {
+                self.window_x = self.previous_window_x;
+                self.window_y = self.previous_window_y;
+            }
+            _ => {
+                self.previous_window_x = self.window_x;
+                self.previous_window_y = self.window_y;
+                self.window_x = 1;
+                self.window_y = 0;
+            }
+        }
+        self.recalculate_current_pane();
+    }
+
     fn text_pane_input(&mut self, key: KeyCode) {
         match key {
             KeyCode::Char(c) => {
@@ -151,11 +172,23 @@ impl Game {
 
     pub fn input(&mut self, key: KeyCode) {
         logging::debug(&format!("Input received: {key}"));
+        if key == KeyCode::Tab {
+            self.toggle_upgrade_pane();
+            return;
+        }
         match key {
-            KeyCode::Up => {self.window_y = self.window_y.saturating_sub(1);}
-            KeyCode::Down => {self.window_y = self.window_y.saturating_add(1).min(1);}
-            KeyCode::Left => {self.window_x = self.window_x.saturating_sub(1);}
-            KeyCode::Right => {self.window_x = self.window_x.saturating_add(1).min(2);}
+            KeyCode::Up => {
+                self.window_y = self.window_y.saturating_sub(1);
+            }
+            KeyCode::Down => {
+                self.window_y = self.window_y.saturating_add(1).min(1);
+            }
+            KeyCode::Left => {
+                self.window_x = self.window_x.saturating_sub(1);
+            }
+            KeyCode::Right => {
+                self.window_x = self.window_x.saturating_add(1).min(2);
+            }
             _ => {}
         }
         self.recalculate_current_pane();
