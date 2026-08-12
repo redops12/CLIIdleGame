@@ -6,7 +6,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Frame;
 
-use crate::game::{Game, WindowPanes, LETTER_QUEUE_HEIGHT};
+use crate::game::{Game, WindowPanes, LETTER_QUEUE_HEIGHT, NUM_LETTERS};
 
 use crate::upgrade::{GameValue, value_to_string};
 
@@ -31,9 +31,15 @@ fn count_color(count: u32) -> Color {
     }
 }
 
-/// 26 letters with a single space between columns: `a b c ... z` (51 wide).
-const AUTO_COLS: usize = 26;
-const AUTO_ROW_WIDTH: usize = AUTO_COLS * 2 - 1;
+/// One char per column with a single space between: `a b c ...` → `cols * 2 - 1`.
+fn auto_row_width(cols: usize) -> usize {
+    cols * 2 - 1
+}
+
+/// Pane width: content plus left/right borders.
+fn auto_pane_width(cols: usize) -> u16 {
+    (auto_row_width(cols) + 2) as u16
+}
 
 fn auto_row(cells: impl IntoIterator<Item = (char, Color)>) -> Line<'static> {
     let mut spans = Vec::new();
@@ -56,10 +62,10 @@ fn auto_zone(game: &Game, height: u16) -> Vec<Line<'static>> {
     let mut content = Vec::new();
 
     // Spawner sits one row above where letters are spawned (queue row 0).
-    content.push(auto_row((0..AUTO_COLS).map(|_| ('█', Color::Cyan))));
+    content.push(auto_row((0..NUM_LETTERS).map(|_| ('█', Color::Cyan))));
 
     for row in 0..LETTER_QUEUE_HEIGHT {
-        let cells = (0..AUTO_COLS).map(|idx| {
+        let cells = (0..NUM_LETTERS).map(|idx| {
             let ch = if queue[idx][row] {
                 (b'a' + idx as u8) as char
             } else {
@@ -218,9 +224,9 @@ fn typing_zone(game: &Game, width: u16) -> Vec<Line<'static>> {
 
 pub fn ui(frame: &mut Frame, game: &Game) {
     let columns = Layout::horizontal([
-        Constraint::Min(30),
-        Constraint::Min(40),
-        Constraint::Min(AUTO_ROW_WIDTH as u16 + 2),
+        Constraint::Fill(1),
+        Constraint::Fill(2),
+        Constraint::Length(auto_pane_width(NUM_LETTERS)),
     ])
     .split(frame.area());
 

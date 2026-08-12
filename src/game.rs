@@ -10,7 +10,7 @@ use crate::upgrade::{
 };
 
 const WASTELAND: &str = include_str!("../assets/wasteland.txt");
-const NUM_LETTERS: usize = 26;
+pub const NUM_LETTERS: usize = 26;
 pub const LETTER_QUEUE_HEIGHT: usize = 20;
 
 pub enum WindowPanes {
