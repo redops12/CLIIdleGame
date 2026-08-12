@@ -2,12 +2,16 @@ use std::collections::HashMap;
 
 use crossterm::event::KeyCode;
 
+use rand;
+
 use crate::BigNum::BigDollar;
 use crate::upgrade::{
     GameValue, Upgrade, button_to_upgrade, game_value_start, initial_game_values, initial_upgrade_costs, upgrade_buttons, upgrade_multiplier, upgrade_starting_cost, upgrade_value_change, upgrade_value_key,
 };
 
 const WASTELAND: &str = include_str!("../assets/wasteland.txt");
+const NUM_LETTERS: usize = 26;
+pub const LETTER_QUEUE_HEIGHT: usize = 20;
 
 pub enum WindowPanes {
     HelpPane,
@@ -38,6 +42,9 @@ pub struct Game {
     pub current_pane: WindowPanes,
     previous_window_x: u16,
     previous_window_y: u16,
+
+    pub letter_queue: [[bool; LETTER_QUEUE_HEIGHT]; NUM_LETTERS],
+    pub last_spawn_time: std::time::Instant,
 }
 
 impl Game {
@@ -55,6 +62,8 @@ impl Game {
             current_pane: WindowPanes::TextPane,
             previous_window_x: 1,
             previous_window_y: 1,
+            letter_queue: [[false; LETTER_QUEUE_HEIGHT]; NUM_LETTERS],
+            last_spawn_time: std::time::Instant::now(),
         }
     }
 
@@ -195,7 +204,57 @@ impl Game {
         match self.current_pane {
             WindowPanes::TextPane => self.text_pane_input(key),
             WindowPanes::UpgradePane => self.upgrade_pane_input(key),
+            WindowPanes::AutoPane => {
+                if let KeyCode::Char(c) = key {
+                    self.increment(&c.to_string());
+                }
+            }
             _ => {}
         }
+    }
+
+    fn letter_queue_update(&mut self, now: std::time::Instant) {
+        // clear out letters that have reached the bottom and have counts
+        let mut money_change: BigDollar = BigDollar::from(0);
+        for x in 0..NUM_LETTERS {
+            if self.letter_queue[x][19] {
+                let letter = (b'a' + x as u8) as char;
+                let count = self.counts.entry(letter.to_string()).or_insert(0);
+                if *count > 0 {
+                    *count -= 1;
+                    money_change += *self.game_values.get(&GameValue::Increment).unwrap();
+                    self.letter_queue[x][19] = false;
+                }
+            }
+        }
+        self.money += money_change;
+
+        // move all letters down one row
+        for y in (1..LETTER_QUEUE_HEIGHT).rev() {
+            for x in 0..NUM_LETTERS {
+                if !self.letter_queue[x][y] {
+                    self.letter_queue[x][y] = self.letter_queue[x][y - 1];
+                    self.letter_queue[x][y - 1] = false;
+                }
+            }
+        }
+
+        if now - self.last_spawn_time >= std::time::Duration::from_millis(50) {
+            // spawn a new letter at the top
+            let x = rand::random::<u32>() % NUM_LETTERS as u32;
+            let idx = x as usize;
+
+            if self.letter_queue[idx][0] {
+                // if the top row is already occupied, don't spawn a new letter
+                return;
+            }
+
+            self.letter_queue[idx][0] = true;
+            self.last_spawn_time = now;
+        }
+    }
+
+    pub fn update(&mut self, now: std::time::Instant) {
+        self.letter_queue_update(now);
     }
 }

@@ -6,7 +6,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Frame;
 
-use crate::game::{Game, WindowPanes};
+use crate::game::{Game, WindowPanes, LETTER_QUEUE_HEIGHT};
 
 use crate::upgrade::{GameValue, value_to_string};
 
@@ -21,37 +21,81 @@ fn key_count(counts: &HashMap<String, u32>, key: &str) -> u32 {
     *counts.get(key).unwrap_or(&0)
 }
 
-fn keyboard_count_lines(counts: &HashMap<String, u32>) -> Vec<Line<'static>> {
-    const ROWS: [&str; 4] = [
-        "1234567890",
-        "qwertyuiop",
-        "asdfghjkl",
-        "zxcvbnm",
-    ];
+fn count_color(count: u32) -> Color {
+    if count == 0 {
+        Color::Red
+    } else if count < 10 {
+        Color::Rgb(255, 140, 0)
+    } else {
+        Color::Green
+    }
+}
 
-    let mut lines = Vec::new();
-    for (row_idx, row) in ROWS.iter().enumerate() {
-        let indent = " ".repeat(row_idx.saturating_sub(1));
-        let mut spans = vec![Span::raw(indent)];
-        for (i, c) in row.chars().enumerate() {
-            if i > 0 {
-                spans.push(Span::raw("  "));
-            }
-            let key = c.to_string();
-            let count = key_count(counts, &key);
-            spans.push(Span::styled(
-                format!("{c}:{count}"),
-                Style::default().fg(Color::Green),
-            ));
+/// 26 letters with a single space between columns: `a b c ... z` (51 wide).
+const AUTO_COLS: usize = 26;
+const AUTO_ROW_WIDTH: usize = AUTO_COLS * 2 - 1;
+
+fn auto_row(cells: impl IntoIterator<Item = (char, Color)>) -> Line<'static> {
+    let mut spans = Vec::new();
+    for (i, (ch, color)) in cells.into_iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::raw(" "));
         }
-        lines.push(Line::from(spans));
+        spans.push(Span::styled(
+            ch.to_string(),
+            Style::default().fg(color),
+        ));
+    }
+    Line::from(spans)
+}
+
+fn auto_zone(game: &Game, height: u16) -> Vec<Line<'static>> {
+    let queue = &game.letter_queue;
+    let counts = &game.counts;
+    let keys: Vec<char> = ('a'..='z').collect();
+    let mut content = Vec::new();
+
+    // Spawner sits one row above where letters are spawned (queue row 0).
+    content.push(auto_row((0..AUTO_COLS).map(|_| ('█', Color::Cyan))));
+
+    for row in 0..LETTER_QUEUE_HEIGHT {
+        let cells = (0..AUTO_COLS).map(|idx| {
+            let ch = if queue[idx][row] {
+                (b'a' + idx as u8) as char
+            } else {
+                ' '
+            };
+            (ch, Color::Green)
+        });
+        content.push(auto_row(cells));
     }
 
-    let space_count = key_count(counts, " ");
-    lines.push(Line::from(Span::styled(
-        format!("    [space]:{space_count}"),
-        Style::default().fg(Color::Green),
-    )));
+    let key_counts: Vec<u32> = keys
+        .iter()
+        .map(|key| key_count(counts, &key.to_string()))
+        .collect();
+    let max_digits = key_counts
+        .iter()
+        .map(|n| n.to_string().len())
+        .max()
+        .unwrap_or(3)
+        .max(3);
+
+    content.push(auto_row(keys.iter().zip(key_counts.iter()).map(|(&c, &count)| {
+        (c, count_color(count))
+    })));
+
+    for digit_row in 0..max_digits {
+        content.push(auto_row(key_counts.iter().map(|&count| {
+            let digits: Vec<char> = count.to_string().chars().collect();
+            let ch = digits.get(digit_row).copied().unwrap_or(' ');
+            (ch, count_color(count))
+        })));
+    }
+
+    let pad = (height as usize).saturating_sub(content.len());
+    let mut lines = vec![Line::from(""); pad];
+    lines.extend(content);
     lines
 }
 
@@ -174,9 +218,9 @@ fn typing_zone(game: &Game, width: u16) -> Vec<Line<'static>> {
 
 pub fn ui(frame: &mut Frame, game: &Game) {
     let columns = Layout::horizontal([
-        Constraint::Percentage(25),
-        Constraint::Percentage(50),
-        Constraint::Percentage(25),
+        Constraint::Min(30),
+        Constraint::Min(40),
+        Constraint::Min(AUTO_ROW_WIDTH as u16 + 2),
     ])
     .split(frame.area());
 
@@ -237,19 +281,19 @@ pub fn ui(frame: &mut Frame, game: &Game) {
         middle[1],
     );
 
+    let keys_height = columns[2].height.saturating_sub(2);
     frame.render_widget(
-        Paragraph::new(keyboard_count_lines(&game.counts))
-        .block(Block::default()
-            .borders(Borders::ALL)
-            .title("Keys")
-            .border_style(
-                Style::default().fg(
+        Paragraph::new(auto_zone(game, keys_height)).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Keys")
+                .border_style(Style::default().fg(
                     match &game.current_pane {
                         WindowPanes::AutoPane => Color::Green,
                         _ => Color::White,
-                    }
-                )
-            )),
+                    },
+                )),
+        ),
         columns[2],
     );
 }

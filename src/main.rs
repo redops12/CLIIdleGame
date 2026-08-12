@@ -39,7 +39,6 @@ impl App {
                 self.should_quit = true;
             }
             c => {
-                self.game.increment(&c.to_string());
                 self.game.input(c);
             }
         }
@@ -50,6 +49,9 @@ fn run(terminal: &mut DefaultTerminal) -> io::Result<()> {
     let mut app = App::new();
 
     loop {
+        let now = std::time::Instant::now();
+
+        app.game.update(now);
         terminal.draw(|f| ui(f, &app.game))?;
 
         if app.should_quit {
