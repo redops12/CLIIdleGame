@@ -8,7 +8,10 @@ pub struct BigNumber {
 }
 
 const UNIT: i64 = 1_000;
-const DISPLAY_SCALE: i64 = 1_000_000; // 3 digits after the decimal
+/// Integer literals in `From<i64>` are milli-units: `from(1)` = 0.001 display units.
+const MILLI: i64 = 1_000;
+const DISPLAY_SCALE: i64 = 1_000_000; // significand → abbreviated display (3 fractional digits)
+const PROMOTE_AT: i64 = 1_000_000_000; // 1M display units in milli-units
 const STORE_MAX: i64 = 1_000_000_000; // 9-digit significand boundary
 
 #[allow(dead_code)]
@@ -24,8 +27,9 @@ impl BigNumber {
     }
 
     fn reduce(mut self) -> Self {
-        // Promote plain integers into abbreviated form at 1e6.
-        if self.power_3 == 0 && self.amount.abs() >= DISPLAY_SCALE {
+        // Promote milli-units into abbreviated significand form at 1M display units.
+        if self.power_3 == 0 && self.amount.abs() >= PROMOTE_AT {
+            self.amount /= MILLI;
             self.power_3 = 1;
         }
 
@@ -36,7 +40,8 @@ impl BigNumber {
 
         while self.amount.abs() < DISPLAY_SCALE && self.power_3 != 0 {
             if self.power_3 == 1 {
-                // Demote back to a plain integer.
+                // Demote back to milli-units.
+                self.amount *= MILLI;
                 self.power_3 = 0;
                 break;
             }
@@ -47,9 +52,34 @@ impl BigNumber {
         self
     }
 
+    fn format_plain_milli(amount: i64) -> String {
+        if amount == 0 {
+            return "0".to_string();
+        }
+        let sign = if amount < 0 { "-" } else { "" };
+        let abs = amount.abs();
+        let whole = abs / MILLI;
+        let frac = abs % MILLI;
+        if frac == 0 {
+            format!("{}{}", sign, whole)
+        } else if whole == 0 {
+            format!("{}0.{:03}", sign, frac)
+        } else {
+            format!("{}{}.{:03}", sign, whole, frac)
+        }
+    }
+
+    fn to_milli(self) -> i64 {
+        if self.power_3 == 0 {
+            self.amount
+        } else {
+            self.amount.saturating_mul(MILLI)
+        }
+    }
+
     fn to_string(&self) -> String {
         if self.power_3 == 0 {
-            return format!("{}", self.amount);
+            return Self::format_plain_milli(self.amount);
         }
         // power_3 >= 1: show top 3 fractional digits of the 9-digit significand
         let powers = ['M', 'B', 'T', 'Q', 'q', 's', 'S', 'O', 'N', 'D'];
@@ -98,13 +128,15 @@ impl Ord for BigNumber {
             return Ordering::Equal;
         }
 
+        let self_milli = self.to_milli().abs();
+        let other_milli = other.to_milli().abs();
         let magnitude = match self.scale().cmp(&other.scale()) {
             Ordering::Greater => {
                 let diff = self.scale() - other.scale();
                 if diff >= 2 {
                     Ordering::Greater
                 } else {
-                    (self.amount.abs() * UNIT).cmp(&other.amount.abs())
+                    (self_milli * UNIT).cmp(&other_milli)
                 }
             }
             Ordering::Less => {
@@ -112,10 +144,10 @@ impl Ord for BigNumber {
                 if diff >= 2 {
                     Ordering::Less
                 } else {
-                    self.amount.abs().cmp(&(other.amount.abs() * UNIT))
+                    self_milli.cmp(&(other_milli * UNIT))
                 }
             }
-            Ordering::Equal => self.amount.abs().cmp(&other.amount.abs()),
+            Ordering::Equal => self_milli.cmp(&other_milli),
         };
 
         if self.amount < 0 {
@@ -138,17 +170,27 @@ impl Add for BigNumber {
         if diff >= 2 {
             self
         } else if diff == 1 {
+            let other_contribution = if other.power_3 == 0 {
+                other.amount / MILLI
+            } else {
+                other.amount / UNIT
+            };
             BigNumber {
-                amount: self.amount + other.amount / UNIT,
+                amount: self.amount + other_contribution,
                 power_3: self.power_3.max(1),
             }
             .reduce()
         } else {
-            BigNumber {
-                amount: self.amount + other.amount,
-                power_3: self.power_3.max(other.power_3),
-            }
-            .reduce()
+            let (amount, power_3) = match (self.power_3, other.power_3) {
+                (0, 0) => (self.amount + other.amount, 0),
+                (0, _) => (self.amount / MILLI + other.amount, other.power_3),
+                (_, 0) => (self.amount + other.amount / MILLI, self.power_3),
+                (_, _) => (
+                    self.amount + other.amount,
+                    self.power_3.max(other.power_3),
+                ),
+            };
+            BigNumber { amount, power_3 }.reduce()
         }
     }
 }
@@ -420,19 +462,32 @@ mod tests {
     use super::*;
 
     #[test]
-    fn power_zero_formats_as_plain_integer() {
+    fn from_int_uses_milli_units() {
+        assert_eq!(BigNumber::from(0).to_string(), "0");
+        assert_eq!(BigNumber::from(1).to_string(), "0.001");
+        assert_eq!(BigNumber::from(42).to_string(), "0.042");
+        assert_eq!(BigNumber::from(1000).to_string(), "1");
+        assert_eq!(BigNumber::from(1500).to_string(), "1.500");
+        assert_eq!(BigNumber::from(-7).to_string(), "-0.007");
+        assert_eq!(BigDollar::from(1).to_string(), "$0.001");
+        assert_eq!(BigDollar::from(1000).to_string(), "$1");
+    }
+
+    #[test]
+    fn power_zero_formats_as_plain_milli() {
         assert_eq!(BigNumber::new(0, 0).to_string(), "0");
-        assert_eq!(BigNumber::new(42, 0).to_string(), "42");
-        assert_eq!(BigNumber::new(-7, 0).to_string(), "-7");
-        assert_eq!(BigNumber::new(999_999, 0).to_string(), "999999");
+        assert_eq!(BigNumber::new(42, 0).to_string(), "0.042");
+        assert_eq!(BigNumber::new(-7, 0).to_string(), "-0.007");
+        assert_eq!(BigNumber::new(999_999, 0).to_string(), "999.999");
     }
 
     #[test]
     fn large_power_zero_reduces_into_abbreviated_form() {
-        assert_eq!(BigNumber::new(1_000_000, 0).to_string(), "1.000 M");
-        assert_eq!(BigNumber::new(1_234_567, 0).to_string(), "1.234 M");
-        assert_eq!(BigNumber::new(999_999_999, 0).to_string(), "999.999 M");
-        assert_eq!(BigNumber::new(1_500_000_000, 0).to_string(), "1.500 B");
+        assert_eq!(BigNumber::new(1_000_000, 0).to_string(), "1000");
+        assert_eq!(BigNumber::new(1_234_567, 0).to_string(), "1234.567");
+        assert_eq!(BigNumber::new(999_999_999, 0).to_string(), "999999.999");
+        assert_eq!(BigNumber::new(1_000_000_000, 0).to_string(), "1.000 M");
+        assert_eq!(BigNumber::new(1_500_000_000, 0).to_string(), "1.500 M");
     }
 
     #[test]
@@ -456,7 +511,7 @@ mod tests {
 
     #[test]
     fn negative_amounts_keep_sign_when_abbreviated() {
-        assert_eq!(BigNumber::new(-1_500_000, 0).to_string(), "-1.500 M");
+        assert_eq!(BigNumber::new(-1_500_000_000, 0).to_string(), "-1.500 M");
         assert_eq!(BigNumber::new(-2_500_000, 2).to_string(), "-2.500 B");
     }
 
@@ -464,7 +519,7 @@ mod tests {
     fn reduce_keeps_amount_in_canonical_range() {
         assert_eq!(
             BigNumber {
-                amount: 1_000_000,
+                amount: 1_000_000_000,
                 power_3: 0
             }
             .reduce(),
@@ -486,7 +541,7 @@ mod tests {
             .reduce(),
             BigNumber::new(500_000_000, 1)
         );
-        // Boundary: abs(amount) == 1e6 stays put (no infinite loop)
+        // Boundary: abs(amount) == 1e6 significand stays put (no infinite loop)
         assert_eq!(
             BigNumber {
                 amount: DISPLAY_SCALE,
@@ -495,14 +550,14 @@ mod tests {
             .reduce(),
             BigNumber::new(DISPLAY_SCALE, 1)
         );
-        // Below display scale demotes to plain integer
+        // Below display scale demotes to milli-units
         assert_eq!(
             BigNumber {
                 amount: DISPLAY_SCALE - 1,
                 power_3: 1
             }
             .reduce(),
-            BigNumber::new(DISPLAY_SCALE - 1, 0)
+            BigNumber::new((DISPLAY_SCALE - 1) * MILLI, 0)
         );
     }
 
@@ -532,15 +587,15 @@ mod tests {
 
     #[test]
     fn add_can_carry_into_next_power() {
-        let a = BigNumber::from(600_000_000);
-        let b = BigNumber::from(600_000_000);
+        let a = BigNumber::from(600_000_000_000_i64);
+        let b = BigNumber::from(600_000_000_000_i64);
         assert_eq!((a + b).to_string(), "1.200 B");
     }
 
     #[test]
     fn add_assign_matches_add() {
         let mut n = BigNumber::new(1_500_000, 1);
-        n += BigNumber::new(500_000, 0); // plain 500_000 shares scale with millions
+        n += BigNumber::new(500_000_000, 0); // 500_000 display units in milli-units
         assert_eq!(n, BigNumber::new(2_000_000, 1));
     }
 
@@ -594,28 +649,28 @@ mod tests {
     #[test]
     fn big_dollar_from_ints_and_display() {
         assert_eq!(BigDollar::from(0).to_string(), "$0");
-        assert_eq!(BigDollar::from(42_i32).to_string(), "$42");
-        assert_eq!(BigDollar::from(1_500_000_i64).to_string(), "$1.500 M");
-        assert_eq!(BigDollar::from(-7_i32).to_string(), "-$7");
+        assert_eq!(BigDollar::from(42_i32).to_string(), "$0.042");
+        assert_eq!(BigDollar::from(1_000_000_000_i64).to_string(), "$1.000 M");
+        assert_eq!(BigDollar::from(-7_i32).to_string(), "-$0.007");
     }
 
     #[test]
     fn big_dollar_ops_forward_to_big_number() {
-        let mut money = BigDollar::from(1_000);
-        money += 500_i64;
-        assert_eq!(money, BigDollar::from(1_500));
+        let mut money = BigDollar::from(1_000_000);
+        money += 500_000_i64;
+        assert_eq!(money, BigDollar::from(1_500_000));
 
-        money -= 200_i32;
-        assert_eq!(money, BigDollar::from(1_300));
+        money -= 200_000_i32;
+        assert_eq!(money, BigDollar::from(1_300_000));
 
-        money = money + BigDollar::from(200);
-        assert_eq!(money, BigDollar::from(1_500));
+        money = money + BigDollar::from(200_000);
+        assert_eq!(money, BigDollar::from(1_500_000));
 
         money = money * 2;
         assert_eq!(money.to_string(), "$3000");
 
         money /= 3;
-        assert_eq!(money, BigDollar::from(1_000));
+        assert_eq!(money, BigDollar::from(1_000_000));
     }
 
     #[test]
@@ -649,7 +704,7 @@ mod tests {
         assert!(billions < trillions);
         assert!(millions < trillions);
         assert!(BigNumber::new(-1_000_000, 3) < BigNumber::new(-1_500_000, 1));
-        assert!(BigNumber::from(999_999) < millions);
+        assert!(BigNumber::from(999_999_999) < millions);
     }
 
     #[test]
