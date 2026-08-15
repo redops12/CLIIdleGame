@@ -77,6 +77,12 @@ impl From<i32> for BigNumber {
     }
 }
 
+impl From<f64> for BigNumber {
+    fn from(value: f64) -> Self {
+        BigNumber::new(value.round() as i64, 0)
+    }
+}
+
 use std::cmp::Ordering;
 use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Sub, SubAssign};
 
@@ -262,6 +268,12 @@ impl From<i64> for BigDollar {
 
 impl From<i32> for BigDollar {
     fn from(value: i32) -> Self {
+        BigDollar(BigNumber::from(value))
+    }
+}
+
+impl From<f64> for BigDollar {
+    fn from(value: f64) -> Self {
         BigDollar(BigNumber::from(value))
     }
 }

@@ -6,13 +6,11 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Frame;
 
-use crate::game::{Game, WindowPanes, LETTER_QUEUE_HEIGHT, NUM_LETTERS};
+use crate::game::{Game, WindowPanes, LETTER_QUEUE_HEIGHT, NUM_LETTERS, UPGRADE_KEYS};
 
-use crate::upgrade::{GameValue, value_to_string};
+use crate::upgrade::get_upgrades;
 
 use crate::BigNum::BigDollar;
-
-use strum::IntoEnumIterator;
 
 const GRAY_DIM: Color = Color::Rgb(80, 80, 80);
 const GRAY_MID: Color = Color::Rgb(140, 140, 140);
@@ -56,8 +54,8 @@ fn auto_row(cells: impl IntoIterator<Item = (char, Color)>) -> Line<'static> {
 }
 
 fn auto_zone(game: &Game, height: u16) -> Vec<Line<'static>> {
-    let queue = &game.letter_queue;
-    let counts = &game.counts;
+    let queue = &game.game_state.letter_queue;
+    let counts = &game.game_state.counts;
     let keys: Vec<char> = ('a'..='z').collect();
     let mut content = Vec::new();
 
@@ -106,39 +104,25 @@ fn auto_zone(game: &Game, height: u16) -> Vec<Line<'static>> {
 }
 
 fn upgrade_zone(game: &Game, width: u16) -> Vec<Line<'static>> {
-    use crate::upgrade::{upgrade_descriptions, Upgrade};
-
     let mut lines = Vec::new();
 
-    lines.push(Line::from(Span::raw(format!("Money: {}", game.money))));
-    for value in GameValue::iter() {
-        let val = game.game_values.get(&value).unwrap();
-        let value_str = value_to_string(value);
-        lines.push(Line::from(Span::styled(
-                    format!("{value_str}: {val}"),
-                    Style::default().fg(Color::Green),
-        )));
-    }
+    lines.push(Line::from(Span::raw(format!("Money: {}", game.game_state.money))));
     lines.push(Line::from(Span::raw("=".repeat(width as usize))));
-    for kind in Upgrade::iter() {
-        let cost: BigDollar = game.upgrade_costs.get(&kind).copied().unwrap_or(BigDollar::from(0));
-        let description = upgrade_descriptions(kind);
-        let button = crate::upgrade::upgrade_buttons(kind);
-        let line_text = format!("[{button}] {description} (Cost: {cost})");
-        let text_width = line_text.chars().count();
-        let pad = (width as usize).saturating_sub(text_width);
-        let padded_line = if pad > 0 {
-            format!("{line_text}{}", " ".repeat(pad))
-        } else {
-            line_text
-        };
-        let color = if game.money >= cost {
+    for (i, kind) in game.get_displayed_upgrades().iter().enumerate() {
+        let upgrade = get_upgrades().get(kind).unwrap();
+        let level = game.game_state.upgrade_levels.get(kind).copied().unwrap_or(0);
+        let max_level = upgrade.costs.len();
+        let cost: BigDollar = upgrade.costs.get(level).copied().unwrap_or(BigDollar::from(0));
+        let name = upgrade.name;
+        let description = upgrade.description;
+        let button = UPGRADE_KEYS.get(i).copied().unwrap_or('?');
+        let color = if game.game_state.money >= cost {
             Color::Green
         } else {
             GRAY_MID
         };
         lines.push(Line::from(Span::styled(
-            padded_line,
+            format!("[{button}]({level}/{max_level}) {cost}|{name} --- {description}"),
             Style::default().fg(color),
         )));
     }
@@ -147,21 +131,21 @@ fn upgrade_zone(game: &Game, width: u16) -> Vec<Line<'static>> {
 
 fn typing_zone(game: &Game, width: u16) -> Vec<Line<'static>> {
     let reference = game
-        .current_text
-        .get(game.current_line)
+        .game_state.current_text
+        .get(game.game_state.current_line)
         .copied()
         .unwrap_or("");
     let next1 = game
-        .current_text
-        .get(game.current_line + 1)
+        .game_state.current_text
+        .get(game.game_state.current_line + 1)
         .copied()
         .unwrap_or("");
     let next2 = game
-        .current_text
-        .get(game.current_line + 2)
+        .game_state.current_text
+        .get(game.game_state.current_line + 2)
         .copied()
         .unwrap_or("");
-    let typed_chars: Vec<char> = game.typed.chars().collect();
+    let typed_chars: Vec<char> = game.game_state.typed.chars().collect();
     let ref_chars: Vec<char> = reference.chars().collect();
     let mut line = vec![];
 
@@ -199,7 +183,7 @@ fn typing_zone(game: &Game, width: u16) -> Vec<Line<'static>> {
     } else {
         correct * 100 / checked
     };
-    let money_change = game.calc_money_change(&game.typed, reference);
+    let money_change = game.calc_money_change(&game.game_state.typed, reference);
     let pct_text = format!("{pct:>3}% {money_change:+}");
     let text_width: usize = line.iter().map(Span::width).sum();
     let pad = (width as usize).saturating_sub(text_width + pct_text.chars().count());
@@ -244,7 +228,7 @@ pub fn ui(frame: &mut Frame, game: &Game) {
             .title("Left")
             .border_style(
                 Style::default().fg(
-                    match &game.current_pane {
+                    match &game.game_state.current_pane {
                         WindowPanes::HelpPane => Color::Green,
                         _ => Color::White,
                     }
@@ -261,7 +245,7 @@ pub fn ui(frame: &mut Frame, game: &Game) {
                 .title("Stats")
                 .border_style(
                     Style::default().fg(
-                        match &game.current_pane {
+                        match &game.game_state.current_pane {
                            WindowPanes::UpgradePane => Color::Green,
                            _ => Color::White,
                         }
@@ -278,7 +262,7 @@ pub fn ui(frame: &mut Frame, game: &Game) {
                 .borders(Borders::ALL)
                 .title("Text").border_style(
                     Style::default().fg(
-                        match &game.current_pane {
+                        match &game.game_state.current_pane {
                            WindowPanes::TextPane => Color::Green,
                            _ => Color::White,
                         }
@@ -294,7 +278,7 @@ pub fn ui(frame: &mut Frame, game: &Game) {
                 .borders(Borders::ALL)
                 .title("Keys")
                 .border_style(Style::default().fg(
-                    match &game.current_pane {
+                    match &game.game_state.current_pane {
                         WindowPanes::AutoPane => Color::Green,
                         _ => Color::White,
                     },

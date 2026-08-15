@@ -1,95 +1,63 @@
-use crossterm::event::KeyCode;
-use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
+use std::collections::HashMap;
+use std::sync::LazyLock;
 
 use crate::BigNum::BigDollar;
+use crate::game::GameState;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumIter)]
-pub enum Upgrade {
+pub enum UpgradeId {
     IncreaseCorrectIncrement,
-    DecreaseIncorrectPenalty,
+    UnlockStreak,
+    DisablePenalty,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumIter)]
-pub enum GameValue {
-    Increment,
-    Penalty,
+pub struct Upgrade {
+    // List of costs per level, the length of the vector is the max level
+    pub costs: Vec<BigDollar>,
+    pub name: &'static str,
+    pub description: &'static str,
+    pub upgrade_unlock_condition: fn(&GameState) -> bool,
+    pub on_buy: fn(&mut GameState),
 }
 
-pub fn upgrade_starting_cost(kind: Upgrade) -> BigDollar {
-    match kind {
-        Upgrade::IncreaseCorrectIncrement => BigDollar::from(100),
-        Upgrade::DecreaseIncorrectPenalty => BigDollar::from(1000),
-    }
-}
+static UPGRADES: LazyLock<HashMap<UpgradeId, Upgrade>> = LazyLock::new(|| {
+    HashMap::from([
+        (
+            UpgradeId::IncreaseCorrectIncrement,
+            Upgrade {
+                costs: (0..=49)
+                    .map(|i| BigDollar::from(50.0 * 1.1_f64.powi(i)))
+                    .collect(),
+                name: "Valuable letters",
+                description: "Increase your letter writing skill",
+                upgrade_unlock_condition: |_game| true,
+                on_buy: |game| game.base_letter_value += BigDollar::from(1),
+            },
+        ),
+        (
+            UpgradeId::UnlockStreak,
+            Upgrade {
+                costs: vec![BigDollar::from(150)],
+                name: "Unlock Trust",
+                description: "More correct letters, more trust, more value",
+                upgrade_unlock_condition: |game| game.total_money_earned >= BigDollar::from(50),
+                on_buy: |game| game.streaks_unlocked = true,
+            },
+        ),
+        (
+            UpgradeId::DisablePenalty,
+            Upgrade {
+                costs: vec![BigDollar::from(10000)],
+                name: "Pay off editors",
+                description: "Income is no longer affected by mistakes",
+                upgrade_unlock_condition: |game| game.total_money_earned >= BigDollar::from(1000),
+                on_buy: |game| game.disable_penalty = true,
+            },
+        ),
+    ])
+});
 
-pub fn upgrade_multiplier(kind: Upgrade) -> f32 {
-    match kind {
-        Upgrade::IncreaseCorrectIncrement => 1.2,
-        Upgrade::DecreaseIncorrectPenalty => 10.0,
-    }
-}
-
-pub fn upgrade_buttons(kind: Upgrade) -> KeyCode {
-    match kind {
-        Upgrade::IncreaseCorrectIncrement => KeyCode::Char('q'),
-        Upgrade::DecreaseIncorrectPenalty => KeyCode::Char('w'),
-    }
-}
-
-pub fn buttons_to_upgrades() -> std::collections::HashMap<KeyCode, Upgrade> {
-    Upgrade::iter()
-        .map(|kind| (upgrade_buttons(kind), kind))
-        .collect()
-}
-
-pub fn button_to_upgrade(button: KeyCode) -> Option<Upgrade> {
-    buttons_to_upgrades().get(&button).copied()
-}
-
-pub fn upgrade_descriptions(kind: Upgrade) -> &'static str {
-    match kind {
-        Upgrade::IncreaseCorrectIncrement => "Increase reward for correct characters",
-        Upgrade::DecreaseIncorrectPenalty => "Decrease penalty for incorrect characters",
-    }
-}
-
-pub fn upgrade_value_key(kind: Upgrade) -> GameValue {
-    match kind {
-        Upgrade::IncreaseCorrectIncrement => GameValue::Increment,
-        Upgrade::DecreaseIncorrectPenalty => GameValue::Penalty,
-    }
-}
-
-pub fn upgrade_value_change(kind: Upgrade) -> BigDollar {
-    match kind {
-        Upgrade::IncreaseCorrectIncrement => BigDollar::from(1),
-        Upgrade::DecreaseIncorrectPenalty => BigDollar::from(-1),
-    }
-}
-
-pub fn game_value_start(value: GameValue) -> BigDollar {
-    match value {
-        GameValue::Increment => BigDollar::from(1),
-        GameValue::Penalty => BigDollar::from(5),
-    }
-}
-
-pub fn initial_upgrade_costs() -> std::collections::HashMap<Upgrade, BigDollar> {
-    Upgrade::iter()
-        .map(|kind| (kind, upgrade_starting_cost(kind)))
-        .collect()
-}
-
-pub fn initial_game_values() -> std::collections::HashMap<GameValue, BigDollar> {
-    GameValue::iter()
-        .map(|value| (value, game_value_start(value)))
-        .collect()
-}
-
-pub fn value_to_string(value: GameValue) -> String {
-    match value {
-        GameValue::Increment => "Increment".to_string(),
-        GameValue::Penalty => "Penalty".to_string(),
-    }
+pub fn get_upgrades() -> &'static HashMap<UpgradeId, Upgrade> {
+    &UPGRADES
 }
