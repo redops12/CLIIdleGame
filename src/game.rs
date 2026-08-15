@@ -40,6 +40,7 @@ pub struct GameState {
 
     // progression variables
     pub upgrade_levels: HashMap<UpgradeId, usize>,
+    pub trust_level: i32,
     pub base_letter_value: BigDollar,
     pub streaks_unlocked: bool,
     pub disable_penalty: bool,
@@ -74,6 +75,7 @@ impl Game {
                 total_money_earned: BigDollar::from(0),
                 upgrade_levels: HashMap::new(),
                 base_letter_value: BigDollar::from(1),
+                trust_level: 0,
                 streaks_unlocked: false,
                 disable_penalty: false,
                 counts: HashMap::new(),
@@ -113,7 +115,7 @@ impl Game {
         for i in 0..len {
             match (typed_chars.get(i), ref_chars.get(i)) {
                 (Some(&c), Some(&t)) if c == t => {
-                    money_change += self.game_state.base_letter_value;
+                    money_change += self.game_state.base_letter_value * 2.0_f64.powi(self.game_state.trust_level);
                 }
                 // Wrong char, missing char, or extra typed char
                 _ => {
@@ -203,10 +205,12 @@ impl Game {
         }
 
         let upgrade_cost = &upgrade.costs[level];
-        if self.game_state.money >= *upgrade_cost {
+        if self.game_state.money >= *upgrade_cost || *upgrade_cost == BigDollar::from(0) {
             self.decrement_money(*upgrade_cost);
             (upgrade.on_buy)(&mut self.game_state);
-            *self.game_state.upgrade_levels.entry(upgrade_id).or_insert(0) += 1;
+            if !upgrade.infinite {
+                *self.game_state.upgrade_levels.entry(upgrade_id).or_insert(0) += 1;
+            }
             logging::info(&format!(
                 "Bought upgrade {:?}",
                 upgrade_id,
@@ -274,18 +278,19 @@ impl Game {
 
     fn letter_queue_update(&mut self, now: std::time::Instant) {
         // clear out letters that have reached the bottom and have counts
-        let mut money_change: BigDollar = BigDollar::from(0);
+        let mut chars_processed = String::new();
         for x in 0..NUM_LETTERS {
             if self.game_state.letter_queue[x][LETTER_QUEUE_HEIGHT - 1] {
                 let letter = (b'a' + x as u8) as char;
                 let count = self.game_state.counts.entry(letter.to_string()).or_insert(0);
                 if *count > 0 {
                     *count -= 1;
-                    money_change += self.game_state.base_letter_value;
+                    chars_processed.push(letter);
                     self.game_state.letter_queue[x][LETTER_QUEUE_HEIGHT - 1] = false;
                 }
             }
         }
+        let money_change = self.calc_money_change(&chars_processed, &chars_processed);
         self.increment_money(money_change);
 
         // move all letters down one row

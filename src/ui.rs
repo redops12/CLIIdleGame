@@ -107,6 +107,9 @@ fn upgrade_zone(game: &Game, width: u16) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
 
     lines.push(Line::from(Span::raw(format!("Money: {}", game.game_state.money))));
+    if game.game_state.trust_level != 0 {
+        lines.push(Line::from(Span::raw(format!("Trust: {}", game.game_state.trust_level))));
+    }
     lines.push(Line::from(Span::raw("=".repeat(width as usize))));
     for (i, kind) in game.get_displayed_upgrades().iter().enumerate() {
         let upgrade = get_upgrades().get(kind).unwrap();
@@ -116,15 +119,22 @@ fn upgrade_zone(game: &Game, width: u16) -> Vec<Line<'static>> {
         let name = upgrade.name;
         let description = upgrade.description;
         let button = UPGRADE_KEYS.get(i).copied().unwrap_or('?');
-        let color = if game.game_state.money >= cost {
+        let color = if game.game_state.money >= cost || cost == BigDollar::from(0) {
             Color::Green
         } else {
             GRAY_MID
         };
-        lines.push(Line::from(Span::styled(
-            format!("[{button}]({level}/{max_level}) {cost}|{name} --- {description}"),
-            Style::default().fg(color),
-        )));
+        if upgrade.infinite {
+            lines.push(Line::from(Span::styled(
+                format!("[{button}] {cost}|{name} --- {description}"),
+                Style::default().fg(color),
+            )));
+        } else {
+            lines.push(Line::from(Span::styled(
+                format!("[{button}]({level}/{max_level}) {cost}|{name} --- {description}"),
+                Style::default().fg(color),
+            )));
+        }
     }
     lines
 }
