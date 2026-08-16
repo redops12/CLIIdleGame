@@ -210,9 +210,9 @@ fn typing_zone(game: &Game, width: u16) -> Vec<Line<'static>> {
     line.push(Span::styled(pct_text, Style::default().fg(pct_color)));
 
     vec![
-        Line::from(Span::styled(next2, Style::default().fg(GRAY_DIM))),
-        Line::from(Span::styled(next1, Style::default().fg(GRAY_MID))),
         Line::from(line),
+        Line::from(Span::styled(next1, Style::default().fg(GRAY_MID))),
+        Line::from(Span::styled(next2, Style::default().fg(GRAY_DIM))),
     ]
 }
 

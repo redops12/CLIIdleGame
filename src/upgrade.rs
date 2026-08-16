@@ -1,11 +1,11 @@
 use strum_macros::EnumIter;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::sync::LazyLock;
 
 use crate::BigNum::BigDollar;
 use crate::game::GameState;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumIter)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumIter, PartialOrd, Ord)]
 pub enum UpgradeId {
     IncreaseCorrectIncrement,
     ResetMoneyForTrust,
@@ -23,13 +23,13 @@ pub struct Upgrade {
     pub on_buy: fn(&mut GameState),
 }
 
-static UPGRADES: LazyLock<HashMap<UpgradeId, Upgrade>> = LazyLock::new(|| {
-    HashMap::from([
+static UPGRADES: LazyLock<BTreeMap<UpgradeId, Upgrade>> = LazyLock::new(|| {
+    BTreeMap::from([
         (
             UpgradeId::IncreaseCorrectIncrement,
             Upgrade {
                 costs: (0..=49)
-                    .map(|i| BigDollar::from(50.0 * 1.1_f64.powi(i)))
+                    .map(|i| BigDollar::from(0.05 * 1.2_f64.powi(i)))
                     .collect(),
                 infinite: false,
                 name: "Valuable letters",
@@ -56,28 +56,28 @@ static UPGRADES: LazyLock<HashMap<UpgradeId, Upgrade>> = LazyLock::new(|| {
         (
             UpgradeId::UnlockStreak,
             Upgrade {
-                costs: vec![BigDollar::from(150)],
+                costs: vec![BigDollar::from(1.0)],
                 infinite: false,
                 name: "Unlock Trust",
                 description: "More correct letters, more trust, more value",
-                upgrade_unlock_condition: |game| game.total_money_earned >= BigDollar::from(50),
+                upgrade_unlock_condition: |game| game.total_money_earned >= BigDollar::from(0.1),
                 on_buy: |game| game.streaks_unlocked = true,
             },
         ),
         (
             UpgradeId::DisablePenalty,
             Upgrade {
-                costs: vec![BigDollar::from(10000)],
+                costs: vec![BigDollar::from(1e7_f64)],
                 infinite: false,
                 name: "Pay off editors",
-                description: "Income is no longer affected by mistakes",
-                upgrade_unlock_condition: |game| game.total_money_earned >= BigDollar::from(1000),
+                description: "Mistakes no longer stop you",
+                upgrade_unlock_condition: |game| game.total_money_earned >= BigDollar::from(1e6_f64),
                 on_buy: |game| game.disable_penalty = true,
             },
         ),
     ])
 });
 
-pub fn get_upgrades() -> &'static HashMap<UpgradeId, Upgrade> {
+pub fn get_upgrades() -> &'static BTreeMap<UpgradeId, Upgrade> {
     &UPGRADES
 }

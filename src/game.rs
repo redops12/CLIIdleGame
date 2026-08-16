@@ -11,6 +11,8 @@ use crate::upgrade::{get_upgrades, UpgradeId};
 const WASTELAND: &str = include_str!("../assets/wasteland.txt");
 pub const NUM_LETTERS: usize = 26;
 pub const LETTER_QUEUE_HEIGHT: usize = 10;
+pub const MAX_TRUST_LEVEL: i32 = 100;
+pub const TRUST_SCALE: f64 = 1.15;
 
 pub enum WindowPanes {
     HelpPane,
@@ -115,7 +117,8 @@ impl Game {
         for i in 0..len {
             match (typed_chars.get(i), ref_chars.get(i)) {
                 (Some(&c), Some(&t)) if c == t => {
-                    money_change += self.game_state.base_letter_value * 2.0_f64.powi(self.game_state.trust_level);
+                    money_change += self.game_state.base_letter_value * TRUST_SCALE.powi(self.game_state.trust_level);
+                    logging::debug(&format!("money change was {money_change}"));
                 }
                 // Wrong char, missing char, or extra typed char
                 _ => {
@@ -129,6 +132,15 @@ impl Game {
         }
 
         money_change
+    }
+
+    pub fn calc_trust(&self, ref_chars: &str, typed_chars: &str, trust_level: i32) -> i32 {
+        let correct = self.game_state.disable_penalty || ref_chars == typed_chars;
+        if correct {
+            (trust_level + 1).min(MAX_TRUST_LEVEL)
+        } else {
+            trust_level.min(0)
+        }
     }
 
 
@@ -177,6 +189,9 @@ impl Game {
                     ref_chars.len()
                 ));
                 self.increment_money(money_change);
+                if self.game_state.streaks_unlocked {
+                    self.game_state.trust_level = self.calc_trust(&String::from_iter(ref_chars.clone()), &String::from_iter(typed_chars.clone()), self.game_state.trust_level);
+                }
                 self.game_state.typed = String::new();
                 self.game_state.current_line += 1;
             }
