@@ -12,6 +12,7 @@ use crate::big_num::BigDollar;
 use crate::upgrade::{get_upgrades, UpgradeId};
 
 const WASTELAND: &str = include_str!("../assets/wasteland.txt");
+const INTRO: &str = include_str!("../assets/intro.txt");
 pub const NUM_LETTERS: usize = 26;
 pub const LETTER_QUEUE_HEIGHT: usize = 10;
 pub const MAX_TRUST_LEVEL: i32 = 100;
@@ -19,7 +20,6 @@ pub const TRUST_SCALE: f64 = 1.15;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WindowPanes {
-    HelpPane,
     TextPane,
     UpgradePane,
     AutoPane,
@@ -81,7 +81,8 @@ pub struct GameState {
 
 impl GameState {
     fn default_current_text() -> Vec<&'static str> {
-        WASTELAND.split('\n').collect()
+        // WASTELAND.split('\n').collect()
+        INTRO.split('\n').collect()
     }
 }
 
