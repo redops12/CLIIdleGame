@@ -53,6 +53,7 @@ pub struct GameState {
     pub money: BigDollar,
 
     // secret stats
+    pub high_water_money: BigDollar,
     pub total_money_earned: BigDollar,
 
     // progression variables
@@ -62,6 +63,7 @@ pub struct GameState {
     pub streaks_unlocked: bool,
     pub capital_letter_bonus_unlocked: bool,
     pub automation_unlocked: bool,
+    pub seniority_level: u8,
     pub letter_compression_unlocked: bool,
     pub disable_penalty: bool,
 
@@ -91,6 +93,7 @@ impl Default for GameState {
             current_line: 0,
             counts: HashMap::new(),
             money: BigDollar::from(0),
+            high_water_money: BigDollar::from(0),
             total_money_earned: BigDollar::from(0),
             upgrade_levels: HashMap::new(),
             trust_level: 0,
@@ -98,6 +101,7 @@ impl Default for GameState {
             streaks_unlocked: false,
             capital_letter_bonus_unlocked: false,
             automation_unlocked: false,
+            seniority_level: 0,
             letter_compression_unlocked: false,
             disable_penalty: false,
             window_x: 1,
@@ -150,6 +154,7 @@ impl Game {
 
     pub fn increment_money(&mut self, amount: BigDollar) {
         self.game_state.money += amount;
+        self.game_state.high_water_money = self.game_state.high_water_money.max(self.game_state.money);
         self.game_state.total_money_earned += amount;
     }
 
@@ -184,7 +189,7 @@ impl Game {
                         continue;
                     }
 
-                    money_change -= BigDollar::from(500);
+                    money_change -= self.game_state.base_letter_value * 5.0 * TRUST_SCALE.powi(self.game_state.trust_level);
                 }
             }
         }
@@ -193,8 +198,12 @@ impl Game {
     }
 
     pub fn calc_trust(&self, ref_chars: &str, typed_chars: &str, trust_level: i32) -> i32 {
-        let correct = self.game_state.disable_penalty || ref_chars == typed_chars;
-        if correct {
+        let percentage_correct = if ref_chars.is_empty() {
+            0.0
+        } else {
+            typed_chars.chars().zip(ref_chars.chars()).filter(|(t, r)| t == r).count() as f64 / ref_chars.len() as f64
+        };
+        if (percentage_correct * 5.0).round() >= (5.0 - self.game_state.seniority_level as f64 * 1.0).round() {
             (trust_level + 1).min(MAX_TRUST_LEVEL)
         } else {
             trust_level.min(0)

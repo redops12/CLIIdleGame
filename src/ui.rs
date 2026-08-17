@@ -107,8 +107,11 @@ fn upgrade_zone(game: &Game, width: u16) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
 
     lines.push(Line::from(Span::raw(format!("Money: {}", game.game_state.money))));
-    if game.game_state.trust_level != 0 {
+    if game.game_state.streaks_unlocked || game.game_state.trust_level != 0 {
         lines.push(Line::from(Span::raw(format!("Trust: {}", game.game_state.trust_level))));
+    }
+    if game.game_state.seniority_level > 0 {
+        lines.push(Line::from(Span::raw(format!("Seniority: {}", game.game_state.seniority_level))));
     }
     lines.push(Line::from(Span::raw("=".repeat(width as usize))));
     for (i, kind) in game.get_displayed_upgrades().iter().enumerate() {
@@ -187,10 +190,10 @@ fn typing_zone(game: &Game, width: u16) -> Vec<Line<'static>> {
         }
     }
 
-    let pct = if checked == 0 {
+    let pct = if checked == 0 || game.game_state.seniority_level >= 5 {
         100
     } else {
-        correct * 100 / checked
+        (correct * 100 / (checked as f64 * (1.0 - game.game_state.seniority_level as f64 * 0.2)).round() as usize).min(100)
     };
     let money_change = game.calc_money_change(&game.game_state.typed, reference);
     let pct_text = format!("{pct:>3}% {money_change:+}");

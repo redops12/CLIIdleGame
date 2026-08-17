@@ -6,11 +6,34 @@ use serde::{Deserialize, Serialize};
 const MILLI: f64 = 1_000.0;
 const POWERS: [char; 10] = ['M', 'B', 'T', 'Q', 'q', 's', 'S', 'O', 'N', 'D'];
 
-#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct BigDollar(f64);
 
 impl BigDollar {
+    fn display_milli(&self) -> i64 {
+        let value = self.0;
+        if value == 0.0 {
+            return 0;
+        }
+
+        let sign: i64 = if value < 0.0 { -1 } else { 1 };
+        let abs_milli = (value.abs() * MILLI).round() as i64;
+        if abs_milli == 0 {
+            return 0;
+        }
+
+        const ABBREV_MILLI: i64 = 1_000_000_000;
+        if abs_milli < ABBREV_MILLI {
+            return sign * abs_milli;
+        }
+
+        let power_3 = Self::abbrev_power_3(abs_milli);
+        let scale = 1000_i64.pow(power_3 as u32);
+        let amount = abs_milli / scale;
+        let rounded_amount = (amount + 500) / 1_000 * 1_000;
+        sign * rounded_amount * scale
+    }
     fn format_plain_milli(milli: i64) -> String {
         if milli == 0 {
             return "0".to_string();
@@ -41,13 +64,13 @@ impl BigDollar {
 
     fn format_abbreviated(sign: &str, abs_milli: i64) -> String {
         let power_3 = Self::abbrev_power_3(abs_milli);
-        // Match the old significand layout: truncate (don't round) to 3 displayed decimals.
         let amount = abs_milli / 1000_i64.pow(power_3 as u32);
+        let rounded_amount = (amount + 500) / 1_000 * 1_000;
         format!(
             "{}{}.{:03} {}",
             sign,
-            amount / 1_000_000,
-            (amount % 1_000_000) / 1_000,
+            rounded_amount / 1_000_000,
+            (rounded_amount % 1_000_000) / 1_000,
             POWERS[power_3 - 1]
         )
     }
@@ -243,9 +266,23 @@ impl DivAssign<i32> for BigDollar {
     }
 }
 
+impl PartialEq for BigDollar {
+    fn eq(&self, other: &Self) -> bool {
+        self.display_milli() == other.display_milli()
+    }
+}
+
+impl Eq for BigDollar {}
+
 impl PartialOrd for BigDollar {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        self.0.partial_cmp(&other.0)
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for BigDollar {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.display_milli().cmp(&other.display_milli())
     }
 }
 
@@ -279,25 +316,25 @@ mod tests {
         assert_eq!(BigDollar::from(1_234_567).format_amount(), "1234.567");
         assert_eq!(BigDollar::from(999_999_999).format_amount(), "999999.999");
         assert_eq!(BigDollar::from(1_000_000_000_i64).format_amount(), "1.000 M");
-        assert_eq!(BigDollar::from(1_234_567_000_i64).format_amount(), "1.234 M");
+        assert_eq!(BigDollar::from(1_234_567_000_i64).format_amount(), "1.235 M");
         assert_eq!(BigDollar::from(1_500_000_000_i64).format_amount(), "1.500 M");
     }
 
     #[test]
     fn millions_and_billions_format_with_three_decimals() {
         assert_eq!(BigDollar::from(5_000_000_000_i64).format_amount(), "5.000 M");
-        assert_eq!(BigDollar::from(1_234_567_000_i64).format_amount(), "1.234 M");
+        assert_eq!(BigDollar::from(1_234_567_000_i64).format_amount(), "1.235 M");
         assert_eq!(BigDollar::from(5_000_000_000_000_i64).format_amount(), "5.000 B");
-        assert_eq!(BigDollar::from(1_234_567_000_000_000_i64).format_amount(), "1.234 T");
-        assert_eq!(BigDollar::from(1_234_567_000_000_000_000_i64).format_amount(), "1.234 Q");
+        assert_eq!(BigDollar::from(1_234_567_000_000_000_i64).format_amount(), "1.235 T");
+        assert_eq!(BigDollar::from(1_234_567_000_000_000_000_i64).format_amount(), "1.235 Q");
     }
 
     #[test]
     fn abbreviated_values_show_three_fractional_digits() {
-        assert_eq!(BigDollar::from(123_456_789_000_i64).format_amount(), "123.456 M");
+        assert_eq!(BigDollar::from(123_456_789_000_i64).format_amount(), "123.457 M");
         let rendered = BigDollar::from(123_456_789_000_i64).format_amount();
         let frac = rendered.split('.').nth(1).unwrap();
-        assert_eq!(&frac[..3], "456");
+        assert_eq!(&frac[..3], "457");
     }
 
     #[test]
@@ -323,7 +360,7 @@ mod tests {
     fn add_different_magnitudes() {
         let millions = BigDollar::from(1_500_000_000_i64);
         let billions = BigDollar::from(2_000_000_000_000_i64);
-        assert_eq!((billions + millions).format_amount(), "2.001 B");
+        assert_eq!((billions + millions).format_amount(), "2.002 B");
         assert_eq!(millions + billions, billions + millions);
 
         let near_trillion = BigDollar::from(999_999_999_000_i64);
@@ -503,9 +540,20 @@ mod tests {
         assert_eq!(BigDollar(999_999_999.9995).format_amount(), "1.000 B");
         assert_eq!(BigDollar::from(1_000_000_000_000_i64).format_amount(), "1.000 B");
         assert_eq!(BigDollar(1_000_000_000.0).format_amount(), "1.000 B");
-        assert_eq!(BigDollar::from(999_999_999_999_499_i64).format_amount(), "999.999 B");
+        assert_eq!(BigDollar::from(999_999_999_999_499_i64).format_amount(), "1000.000 B");
         assert_eq!(BigDollar(999_999_999_999.9995).format_amount(), "1.000 T");
         assert_eq!(BigDollar(1_000_000_000_000.0).format_amount(), "1.000 T");
+    }
+
+    #[test]
+    fn ord_matches_display_precision() {
+        assert_eq!(BigDollar(0.1 + 0.2), BigDollar(0.3));
+        assert!(BigDollar(999_999.9994) < BigDollar(999_999.9995));
+
+        let a = BigDollar::from(123_456_789_000_i64);
+        let b = BigDollar::from(123_456_789_500_i64);
+        assert_eq!(a.format_amount(), b.format_amount());
+        assert_eq!(a, b);
     }
 
     #[test]
