@@ -3,6 +3,7 @@ use std::time::Duration;
 
 mod big_num;
 mod game;
+mod save;
 mod ui;
 mod upgrade;
 
@@ -11,6 +12,7 @@ use crossterm::event::{self, Event, KeyEvent};
 use ratatui::DefaultTerminal;
 
 use game::Game;
+use save::{prompt_save, prompt_startup};
 use ui::ui;
 
 const FPS: u32 = 60;
@@ -42,10 +44,17 @@ fn run(terminal: &mut DefaultTerminal, game: &mut Game) -> io::Result<()> {
 fn main() -> io::Result<()> {
     init_logging();
     logging::info("Starting Game");
+
+    let startup = prompt_startup()?;
+    let mut save_path = startup.save_path;
+
     let mut terminal = ratatui::init();
 
     let (input_tx, input_rx) = unbounded::<KeyEvent>();
-    let mut game = Game::new(input_rx);
+    let mut game = match startup.game_state {
+        Some(game_state) => Game::from_state(input_rx, game_state),
+        None => Game::new(input_rx),
+    };
 
     std::thread::spawn(move || {
         loop {
@@ -68,6 +77,7 @@ fn main() -> io::Result<()> {
 
     let result = run(&mut terminal, &mut game);
     ratatui::restore();
+    prompt_save(&game, &mut save_path)?;
     logging::info("Exiting Game");
     result
 }

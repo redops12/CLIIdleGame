@@ -1,11 +1,13 @@
-use strum_macros::EnumIter;
 use std::collections::BTreeMap;
 use std::sync::LazyLock;
+
+use serde::{Deserialize, Serialize};
+use strum_macros::EnumIter;
 
 use crate::big_num::BigDollar;
 use crate::game::GameState;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumIter, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumIter, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum UpgradeId {
     IncreaseCorrectIncrement,
     ResetMoneyForTrust,

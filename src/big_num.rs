@@ -1,10 +1,13 @@
 use std::cmp::Ordering;
 use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Sub, SubAssign};
 
+use serde::{Deserialize, Serialize};
+
 const MILLI: f64 = 1_000.0;
 const POWERS: [char; 10] = ['M', 'B', 'T', 'Q', 'q', 's', 'S', 'O', 'N', 'D'];
 
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct BigDollar(f64);
 
 impl BigDollar {

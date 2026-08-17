@@ -1,9 +1,12 @@
 use std::collections::HashMap;
+use std::io;
+use std::path::Path;
 
 use crossbeam_channel::Receiver;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use rand;
+use serde::{Deserialize, Serialize};
 
 use crate::big_num::BigDollar;
 use crate::upgrade::{get_upgrades, UpgradeId};
@@ -14,6 +17,7 @@ pub const LETTER_QUEUE_HEIGHT: usize = 10;
 pub const MAX_TRUST_LEVEL: i32 = 100;
 pub const TRUST_SCALE: f64 = 1.15;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WindowPanes {
     HelpPane,
     TextPane,
@@ -23,11 +27,13 @@ pub enum WindowPanes {
 
 pub const UPGRADE_KEYS: [char; 10] = ['q', 'w', 'e', 'r', 't', 'a', 's', 'd', 'f', 'g'];
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GameState {
     // currently typed string
     pub typed: String,
 
     // Text variables
+    #[serde(skip, default = "GameState::default_current_text")]
     pub current_text: Vec<&'static str>,
     pub current_line: usize,
 
@@ -60,6 +66,12 @@ pub struct GameState {
     pub letter_queue: [[bool; LETTER_QUEUE_HEIGHT]; NUM_LETTERS],
 }
 
+impl GameState {
+    fn default_current_text() -> Vec<&'static str> {
+        WASTELAND.split('\n').collect()
+    }
+}
+
 pub struct Game {
     input_rx: Receiver<KeyEvent>,
     pub should_quit: bool,
@@ -70,31 +82,49 @@ pub struct Game {
 
 impl Game {
     pub fn new(input_rx: Receiver<KeyEvent>) -> Self {
+        Self::from_state(input_rx, Self::default_state())
+    }
+
+    pub fn from_state(input_rx: Receiver<KeyEvent>, game_state: GameState) -> Self {
         Self {
             input_rx,
             should_quit: false,
             last_spawn_time: std::time::Instant::now(),
-            game_state: GameState {
-                total_money_earned: BigDollar::from(0),
-                upgrade_levels: HashMap::new(),
-                base_letter_value: BigDollar::from(0.003),
-                trust_level: 0,
-                streaks_unlocked: false,
-                automation_unlocked: false,
-                disable_penalty: false,
-                counts: HashMap::new(),
-                typed: String::new(),
-                current_text: WASTELAND.split('\n').collect(),
-                current_line: 0,
-                money: BigDollar::from(0),
-                window_x: 1,
-                window_y: 1,
-                current_pane: WindowPanes::TextPane,
-                previous_window_x: 1,
-                previous_window_y: 1,
-                letter_queue: [[false; LETTER_QUEUE_HEIGHT]; NUM_LETTERS],
-            }
+            game_state,
         }
+    }
+
+    pub fn default_state() -> GameState {
+        GameState {
+            total_money_earned: BigDollar::from(0),
+            upgrade_levels: HashMap::new(),
+            base_letter_value: BigDollar::from(0.003),
+            trust_level: 0,
+            streaks_unlocked: false,
+            automation_unlocked: false,
+            disable_penalty: false,
+            counts: HashMap::new(),
+            typed: String::new(),
+            current_text: GameState::default_current_text(),
+            current_line: 0,
+            money: BigDollar::from(0),
+            window_x: 1,
+            window_y: 1,
+            current_pane: WindowPanes::TextPane,
+            previous_window_x: 1,
+            previous_window_y: 1,
+            letter_queue: [[false; LETTER_QUEUE_HEIGHT]; NUM_LETTERS],
+        }
+    }
+
+    pub fn load_state(path: &Path) -> io::Result<GameState> {
+        let data = std::fs::read_to_string(path)?;
+        serde_json::from_str(&data).map_err(io::Error::other)
+    }
+
+    pub fn save_state(&self, path: &Path) -> io::Result<()> {
+        let json = serde_json::to_string_pretty(&self.game_state).map_err(io::Error::other)?;
+        std::fs::write(path, json)
     }
 
     pub fn increment_money(&mut self, amount: BigDollar) {
@@ -352,5 +382,29 @@ impl Game {
     pub fn update(&mut self, now: std::time::Instant) {
         self.update_handle_inputs();
         self.letter_queue_update(now);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::upgrade::UpgradeId;
+
+    #[test]
+    fn game_state_json_roundtrip() {
+        let mut state = Game::default_state();
+        state.money = BigDollar::from(42);
+        state.current_line = 3;
+        state.upgrade_levels.insert(UpgradeId::UnlockStreak, 1);
+        state.automation_unlocked = true;
+
+        let json = serde_json::to_string_pretty(&state).unwrap();
+        let loaded: GameState = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(loaded.money, state.money);
+        assert_eq!(loaded.current_line, state.current_line);
+        assert_eq!(loaded.upgrade_levels, state.upgrade_levels);
+        assert_eq!(loaded.automation_unlocked, state.automation_unlocked);
+        assert_eq!(loaded.current_text.len(), GameState::default_current_text().len());
     }
 }
