@@ -12,7 +12,9 @@ pub enum UpgradeId {
     IncreaseCorrectIncrement,
     ResetMoneyForTrust,
     UnlockStreak,
+    CapitalLetterBonus,
     UnlockAutomation,
+    LetterCompression,
     DisablePenalty,
 }
 
@@ -21,7 +23,7 @@ pub struct Upgrade {
     pub costs: Vec<BigDollar>,
     pub infinite: bool,
     pub name: &'static str,
-    pub description: &'static str,
+    // pub description: &'static str,
     pub upgrade_unlock_condition: fn(&GameState) -> bool,
     pub on_buy: fn(&mut GameState),
 }
@@ -35,8 +37,8 @@ static UPGRADES: LazyLock<BTreeMap<UpgradeId, Upgrade>> = LazyLock::new(|| {
                     .map(|i| BigDollar::from(0.05 * 1.2_f64.powi(i)))
                     .collect(),
                 infinite: false,
-                name: "Valuable letters",
-                description: "Increase your letter writing skill",
+                name: "Writing Sklill",
+                // description: "Increase your letter writing skill",
                 upgrade_unlock_condition: |_game| true,
                 on_buy: |game| game.base_letter_value += BigDollar::from(1),
             },
@@ -47,7 +49,7 @@ static UPGRADES: LazyLock<BTreeMap<UpgradeId, Upgrade>> = LazyLock::new(|| {
                 costs: vec![BigDollar::from(0)],
                 infinite: true,
                 name: "Beg for help",
-                description: "Lose trust to reset your money",
+                // description: "Lose trust to reset your money",
                 upgrade_unlock_condition: |game| game.money < BigDollar::from(0),
                 on_buy: |game| {
                     game.total_money_earned += BigDollar::from(0) - game.money;
@@ -62,9 +64,20 @@ static UPGRADES: LazyLock<BTreeMap<UpgradeId, Upgrade>> = LazyLock::new(|| {
                 costs: vec![BigDollar::from(1.0)],
                 infinite: false,
                 name: "Unlock Trust",
-                description: "More correct letters, more trust, more value",
+                // description: "More correct letters, more trust, more value",
                 upgrade_unlock_condition: |game| game.total_money_earned >= BigDollar::from(0.1),
                 on_buy: |game| game.streaks_unlocked = true,
+            },
+        ),
+        (
+            UpgradeId::CapitalLetterBonus,
+            Upgrade {
+                costs: vec![BigDollar::from(5.0)],
+                infinite: false,
+                name: "Discover the shift key",
+                // description: "Capital letters are worth more",
+                upgrade_unlock_condition: |game| game.total_money_earned >= BigDollar::from(0.5),
+                on_buy: |game| game.capital_letter_bonus_unlocked = true,
             },
         ),
         (
@@ -73,9 +86,20 @@ static UPGRADES: LazyLock<BTreeMap<UpgradeId, Upgrade>> = LazyLock::new(|| {
                 costs: vec![BigDollar::from(10.0)],
                 infinite: false,
                 name: "Let the robots write",
-                description: "Hand writing is difficult and error-prone, let the robots do it for you",
+                // description: "Hand writing is difficult and error-prone, let the robots do it for you",
                 upgrade_unlock_condition: |game| game.total_money_earned >= BigDollar::from(1.0),
                 on_buy: |game| game.automation_unlocked = true,
+            },
+        ),
+        (
+            UpgradeId::LetterCompression,
+            Upgrade {
+                costs: vec![BigDollar::from(100.0)],
+                infinite: false,
+                name: "Letter compression",
+                // description: "Compress letters to make them more valuable",
+                upgrade_unlock_condition: |game| game.total_money_earned >= BigDollar::from(10.0),
+                on_buy: |game| game.letter_compression_unlocked = true,
             },
         ),
         (
@@ -84,7 +108,7 @@ static UPGRADES: LazyLock<BTreeMap<UpgradeId, Upgrade>> = LazyLock::new(|| {
                 costs: vec![BigDollar::from(1e7_f64)],
                 infinite: false,
                 name: "Pay off editors",
-                description: "Mistakes no longer stop you",
+                // description: "Mistakes no longer stop you",
                 upgrade_unlock_condition: |game| game.total_money_earned >= BigDollar::from(1e6_f64),
                 on_buy: |game| game.disable_penalty = true,
             },

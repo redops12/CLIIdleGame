@@ -27,7 +27,16 @@ pub enum WindowPanes {
 
 pub const UPGRADE_KEYS: [char; 10] = ['q', 'w', 'e', 'r', 't', 'a', 's', 'd', 'f', 'g'];
 
+fn idx_to_letter(idx: usize) -> char {
+    (b'a' + idx as u8) as char
+}
+
+fn idx_to_upper_letter(idx: usize) -> char {
+    (b'A' + idx as u8) as char
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct GameState {
     // currently typed string
     pub typed: String,
@@ -51,7 +60,9 @@ pub struct GameState {
     pub trust_level: i32,
     pub base_letter_value: BigDollar,
     pub streaks_unlocked: bool,
+    pub capital_letter_bonus_unlocked: bool,
     pub automation_unlocked: bool,
+    pub letter_compression_unlocked: bool,
     pub disable_penalty: bool,
 
     // top left is 0, 0
@@ -63,7 +74,7 @@ pub struct GameState {
     previous_window_y: u16,
 
 
-    pub letter_queue: [[bool; LETTER_QUEUE_HEIGHT]; NUM_LETTERS],
+    pub letter_queue: [[char; LETTER_QUEUE_HEIGHT]; NUM_LETTERS],
 }
 
 impl GameState {
@@ -72,11 +83,39 @@ impl GameState {
     }
 }
 
+impl Default for GameState {
+    fn default() -> Self {
+        Self {
+            typed: String::new(),
+            current_text: Self::default_current_text(),
+            current_line: 0,
+            counts: HashMap::new(),
+            money: BigDollar::from(0),
+            total_money_earned: BigDollar::from(0),
+            upgrade_levels: HashMap::new(),
+            trust_level: 0,
+            base_letter_value: BigDollar::from(0.003),
+            streaks_unlocked: false,
+            capital_letter_bonus_unlocked: false,
+            automation_unlocked: false,
+            letter_compression_unlocked: false,
+            disable_penalty: false,
+            window_x: 1,
+            window_y: 1,
+            current_pane: WindowPanes::TextPane,
+            previous_window_x: 1,
+            previous_window_y: 1,
+            letter_queue: [[' '; LETTER_QUEUE_HEIGHT]; NUM_LETTERS],
+        }
+    }
+}
+
 pub struct Game {
     input_rx: Receiver<KeyEvent>,
     pub should_quit: bool,
 
     pub last_spawn_time: std::time::Instant,
+    pub last_update_time: std::time::Instant,
     pub game_state: GameState,
 }
 
@@ -90,31 +129,13 @@ impl Game {
             input_rx,
             should_quit: false,
             last_spawn_time: std::time::Instant::now(),
+            last_update_time: std::time::Instant::now(),
             game_state,
         }
     }
 
     pub fn default_state() -> GameState {
-        GameState {
-            total_money_earned: BigDollar::from(0),
-            upgrade_levels: HashMap::new(),
-            base_letter_value: BigDollar::from(0.003),
-            trust_level: 0,
-            streaks_unlocked: false,
-            automation_unlocked: false,
-            disable_penalty: false,
-            counts: HashMap::new(),
-            typed: String::new(),
-            current_text: GameState::default_current_text(),
-            current_line: 0,
-            money: BigDollar::from(0),
-            window_x: 1,
-            window_y: 1,
-            current_pane: WindowPanes::TextPane,
-            previous_window_x: 1,
-            previous_window_y: 1,
-            letter_queue: [[false; LETTER_QUEUE_HEIGHT]; NUM_LETTERS],
-        }
+        GameState::default()
     }
 
     pub fn load_state(path: &Path) -> io::Result<GameState> {
@@ -149,7 +170,12 @@ impl Game {
         for i in 0..len {
             match (typed_chars.get(i), ref_chars.get(i)) {
                 (Some(&c), Some(&t)) if c == t => {
-                    money_change += self.game_state.base_letter_value * TRUST_SCALE.powi(self.game_state.trust_level);
+                    let mult = if c.is_ascii_uppercase() && self.game_state.capital_letter_bonus_unlocked {
+                        5.0
+                    } else {
+                        1.0
+                    };
+                    money_change += self.game_state.base_letter_value * TRUST_SCALE.powi(self.game_state.trust_level) * mult;
                     logging::debug(&format!("money change was {money_change}"));
                 }
                 // Wrong char, missing char, or extra typed char
@@ -178,22 +204,20 @@ impl Game {
 
     fn recalculate_current_pane(&mut self) {
         match self.game_state.automation_unlocked {
-            true => {
-                self.game_state.window_x = self.game_state.window_x.min(2);
+            false => {
+                self.game_state.window_x = self.game_state.window_x.min(0);
                 self.game_state.current_pane = match (self.game_state.window_x, self.game_state.window_y) {
-                    (0, _) => WindowPanes::HelpPane,
-                    (1, 0) => WindowPanes::UpgradePane,
-                    (1, 1) => WindowPanes::TextPane,
+                    (0, 0) => WindowPanes::UpgradePane,
+                    (0, 1) => WindowPanes::TextPane,
                     _ => WindowPanes::TextPane,
                 }
             }
-            false => {
+            true => {
                 self.game_state.window_x = self.game_state.window_x.min(1);
                 self.game_state.current_pane = match (self.game_state.window_x, self.game_state.window_y) {
-                    (0, _) => WindowPanes::HelpPane,
-                    (1, 0) => WindowPanes::UpgradePane,
-                    (1, 1) => WindowPanes::TextPane,
-                    (2, _) => WindowPanes::AutoPane,
+                    (0, 0) => WindowPanes::UpgradePane,
+                    (0, 1) => WindowPanes::TextPane,
+                    (1, _) => WindowPanes::AutoPane,
                     _ => WindowPanes::TextPane,
                 };
             }
@@ -210,7 +234,7 @@ impl Game {
             _ => {
                 self.game_state.previous_window_x = self.game_state.window_x;
                 self.game_state.previous_window_y = self.game_state.window_y;
-                self.game_state.window_x = 1;
+                self.game_state.window_x = 0;
                 self.game_state.window_y = 0;
             }
         }
@@ -320,7 +344,7 @@ impl Game {
                 KeyCode::Up => self.game_state.window_y = self.game_state.window_y.saturating_sub(1),
                 KeyCode::Down => self.game_state.window_y = self.game_state.window_y.saturating_add(1).min(1),
                 KeyCode::Left => self.game_state.window_x = self.game_state.window_x.saturating_sub(1),
-                KeyCode::Right => self.game_state.window_x = self.game_state.window_x.saturating_add(1).min(2),
+                KeyCode::Right => self.game_state.window_x = self.game_state.window_x.saturating_add(1).min(1),
                 _ => {}
             }
             self.recalculate_current_pane();
@@ -338,16 +362,49 @@ impl Game {
     }
 
     fn letter_queue_update(&mut self, now: std::time::Instant) {
+        // compress letters in the queue if letter_compression_unlocked is true
+        if self.game_state.letter_compression_unlocked {
+            for x in 0..NUM_LETTERS {
+                let mut start_y = LETTER_QUEUE_HEIGHT;
+                for y in (4..LETTER_QUEUE_HEIGHT).rev() {
+                    if self.game_state.letter_queue[x][y] == idx_to_letter(x) {
+                        start_y = y;
+                        break;
+                    }
+                }
+                if start_y == LETTER_QUEUE_HEIGHT {
+                    continue;
+                }
+                let mut compression_possible = true;
+                for y in start_y - 4..=start_y {
+                    if self.game_state.letter_queue[x][y] == ' ' {
+                        compression_possible = false;
+                        break;
+                    }
+                }
+                if compression_possible {
+                    self.game_state.letter_queue[x][start_y] = self.game_state.letter_queue[x][start_y - 1].to_ascii_uppercase();
+                    for y in start_y - 4..start_y {
+                        self.game_state.letter_queue[x][y] = ' ';
+                    }
+                }
+            }
+        }
+
         // clear out letters that have reached the bottom and have counts
         let mut chars_processed = String::new();
         for x in 0..NUM_LETTERS {
-            if self.game_state.letter_queue[x][LETTER_QUEUE_HEIGHT - 1] {
-                let letter = (b'a' + x as u8) as char;
+            let letter = if self.game_state.letter_compression_unlocked {
+                idx_to_upper_letter(x)
+            } else {
+                idx_to_letter(x)
+            };
+            if self.game_state.letter_queue[x][LETTER_QUEUE_HEIGHT - 1] == letter {
                 let count = self.game_state.counts.entry(letter.to_string()).or_insert(0);
                 if *count > 0 {
                     *count -= 1;
                     chars_processed.push(letter);
-                    self.game_state.letter_queue[x][LETTER_QUEUE_HEIGHT - 1] = false;
+                    self.game_state.letter_queue[x][LETTER_QUEUE_HEIGHT - 1] = ' ';
                 }
             }
         }
@@ -357,9 +414,9 @@ impl Game {
         // move all letters down one row
         for y in (1..LETTER_QUEUE_HEIGHT).rev() {
             for x in 0..NUM_LETTERS {
-                if !self.game_state.letter_queue[x][y] {
+                if self.game_state.letter_queue[x][y] == ' ' {
                     self.game_state.letter_queue[x][y] = self.game_state.letter_queue[x][y - 1];
-                    self.game_state.letter_queue[x][y - 1] = false;
+                    self.game_state.letter_queue[x][y - 1] = ' ';
                 }
             }
         }
@@ -369,19 +426,25 @@ impl Game {
             let x = rand::random::<u32>() % NUM_LETTERS as u32;
             let idx = x as usize;
 
-            if self.game_state.letter_queue[idx][0] {
+            if self.game_state.letter_queue[idx][0] != ' ' {
                 // if the top row is already occupied, don't spawn a new letter
                 return;
             }
 
-            self.game_state.letter_queue[idx][0] = true;
+            self.game_state.letter_queue[idx][0] = (b'a' + idx as u8) as char;
             self.last_spawn_time = now;
         }
     }
 
     pub fn update(&mut self, now: std::time::Instant) {
         self.update_handle_inputs();
-        self.letter_queue_update(now);
+
+        if now - self.last_update_time >= std::time::Duration::from_millis(200) {
+            self.last_update_time = now;
+            if self.game_state.automation_unlocked {
+                self.letter_queue_update(now);
+            }
+        }
     }
 }
 
@@ -405,6 +468,22 @@ mod tests {
         assert_eq!(loaded.current_line, state.current_line);
         assert_eq!(loaded.upgrade_levels, state.upgrade_levels);
         assert_eq!(loaded.automation_unlocked, state.automation_unlocked);
+        assert_eq!(loaded.current_text.len(), GameState::default_current_text().len());
+    }
+
+    #[test]
+    fn game_state_partial_json_uses_defaults() {
+        let json = r#"{"money": 0.042, "current_line": 3}"#;
+        let loaded: GameState = serde_json::from_str(json).unwrap();
+
+        assert_eq!(loaded.money, BigDollar::from(42));
+        assert_eq!(loaded.current_line, 3);
+        assert_eq!(loaded.automation_unlocked, false);
+        assert_eq!(loaded.capital_letter_bonus_unlocked, false);
+        assert_eq!(loaded.letter_compression_unlocked, false);
+        assert_eq!(loaded.base_letter_value, BigDollar::from(0.003));
+        assert_eq!(loaded.trust_level, 0);
+        assert_eq!(loaded.current_pane, WindowPanes::TextPane);
         assert_eq!(loaded.current_text.len(), GameState::default_current_text().len());
     }
 }

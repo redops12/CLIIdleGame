@@ -56,7 +56,11 @@ fn auto_row(cells: impl IntoIterator<Item = (char, Color)>) -> Line<'static> {
 fn auto_zone(game: &Game, height: u16) -> Vec<Line<'static>> {
     let queue = &game.game_state.letter_queue;
     let counts = &game.game_state.counts;
-    let keys: Vec<char> = ('a'..='z').collect();
+    let keys: Vec<char> = if game.game_state.letter_compression_unlocked {
+        ('A'..='Z').collect()
+    } else {
+        ('a'..='z').collect()
+    };
     let mut content = Vec::new();
 
     // Spawner sits one row above where letters are spawned (queue row 0).
@@ -64,11 +68,7 @@ fn auto_zone(game: &Game, height: u16) -> Vec<Line<'static>> {
 
     for row in 0..LETTER_QUEUE_HEIGHT {
         let cells = (0..NUM_LETTERS).map(|idx| {
-            let ch = if queue[idx][row] {
-                (b'a' + idx as u8) as char
-            } else {
-                ' '
-            };
+            let ch = queue[idx][row];
             (ch, Color::Green)
         });
         content.push(auto_row(cells));
@@ -117,7 +117,6 @@ fn upgrade_zone(game: &Game, width: u16) -> Vec<Line<'static>> {
         let max_level = upgrade.costs.len();
         let cost: BigDollar = upgrade.costs.get(level).copied().unwrap_or(BigDollar::from(0));
         let name = upgrade.name;
-        let description = upgrade.description;
         let button = UPGRADE_KEYS.get(i).copied().unwrap_or('?');
         let color = if game.game_state.money >= cost || cost == BigDollar::from(0) {
             Color::Green
@@ -126,12 +125,12 @@ fn upgrade_zone(game: &Game, width: u16) -> Vec<Line<'static>> {
         };
         if upgrade.infinite {
             lines.push(Line::from(Span::styled(
-                format!("[{button}] {cost}|{name} --- {description}"),
+                format!("[{button}] {cost}|{name}"),
                 Style::default().fg(color),
             )));
         } else {
             lines.push(Line::from(Span::styled(
-                format!("[{button}]({level}/{max_level}) {cost}|{name} --- {description}"),
+                format!("[{button}]({level}/{max_level}) {cost}|{name}"),
                 Style::default().fg(color),
             )));
         }
@@ -238,7 +237,7 @@ pub fn ui(frame: &mut Frame, game: &Game) {
         Paragraph::new(upgrade_zone(game, upgrade_text_width)).block(
             Block::default()
                 .borders(Borders::ALL)
-                .title("Stats")
+                .title("Statsfalse")
                 .border_style(
                     Style::default().fg(
                         match &game.game_state.current_pane {
