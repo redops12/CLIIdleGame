@@ -2,7 +2,7 @@ use strum_macros::EnumIter;
 use std::collections::BTreeMap;
 use std::sync::LazyLock;
 
-use crate::BigNum::BigDollar;
+use crate::big_num::BigDollar;
 use crate::game::GameState;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumIter, PartialOrd, Ord)]
@@ -10,6 +10,7 @@ pub enum UpgradeId {
     IncreaseCorrectIncrement,
     ResetMoneyForTrust,
     UnlockStreak,
+    UnlockAutomation,
     DisablePenalty,
 }
 
@@ -62,6 +63,17 @@ static UPGRADES: LazyLock<BTreeMap<UpgradeId, Upgrade>> = LazyLock::new(|| {
                 description: "More correct letters, more trust, more value",
                 upgrade_unlock_condition: |game| game.total_money_earned >= BigDollar::from(0.1),
                 on_buy: |game| game.streaks_unlocked = true,
+            },
+        ),
+        (
+            UpgradeId::UnlockAutomation,
+            Upgrade {
+                costs: vec![BigDollar::from(10.0)],
+                infinite: false,
+                name: "Let the robots write",
+                description: "Hand writing is difficult and error-prone, let the robots do it for you",
+                upgrade_unlock_condition: |game| game.total_money_earned >= BigDollar::from(1.0),
+                on_buy: |game| game.automation_unlocked = true,
             },
         ),
         (

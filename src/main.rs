@@ -1,7 +1,7 @@
 use std::io;
 use std::time::Duration;
 
-mod BigNum;
+mod big_num;
 mod game;
 mod ui;
 mod upgrade;

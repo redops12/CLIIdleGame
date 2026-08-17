@@ -10,7 +10,7 @@ use crate::game::{Game, WindowPanes, LETTER_QUEUE_HEIGHT, NUM_LETTERS, UPGRADE_K
 
 use crate::upgrade::get_upgrades;
 
-use crate::BigNum::BigDollar;
+use crate::big_num::BigDollar;
 
 const GRAY_DIM: Color = Color::Rgb(80, 80, 80);
 const GRAY_MID: Color = Color::Rgb(140, 140, 140);
@@ -217,35 +217,21 @@ fn typing_zone(game: &Game, width: u16) -> Vec<Line<'static>> {
 }
 
 pub fn ui(frame: &mut Frame, game: &Game) {
-    let columns = Layout::horizontal([
-        Constraint::Fill(1),
-        Constraint::Fill(2),
-        Constraint::Length(auto_pane_width(NUM_LETTERS)),
-    ])
-    .split(frame.area());
+    let columns = if game.game_state.automation_unlocked {
+        Layout::horizontal([
+            Constraint::Fill(2),
+            Constraint::Length(auto_pane_width(NUM_LETTERS)),
+        ])
+        .split(frame.area())
+    } else {
+        Layout::horizontal([Constraint::Fill(2)]).split(frame.area())
+    };
 
     let middle = Layout::vertical([
         Constraint::Min(5),
         Constraint::Length(5),
     ])
-    .split(columns[1]);
-
-    frame.render_widget(
-        Paragraph::new("Esc / Ctrl-C to quit")
-        .block(
-            Block::default()
-            .borders(Borders::ALL)
-            .title("Left")
-            .border_style(
-                Style::default().fg(
-                    match &game.game_state.current_pane {
-                        WindowPanes::HelpPane => Color::Green,
-                        _ => Color::White,
-                    }
-                )
-            )),
-        columns[0],
-    );
+    .split(columns[0]);
 
     let upgrade_text_width = middle[1].width.saturating_sub(2);
     frame.render_widget(
@@ -281,19 +267,21 @@ pub fn ui(frame: &mut Frame, game: &Game) {
         middle[1],
     );
 
-    let keys_height = columns[2].height.saturating_sub(2);
-    frame.render_widget(
-        Paragraph::new(auto_zone(game, keys_height)).block(
-            Block::default()
+    if game.game_state.automation_unlocked {
+        let keys_height = columns[1].height.saturating_sub(2);
+        frame.render_widget(
+            Paragraph::new(auto_zone(game, keys_height)).block(
+                Block::default()
                 .borders(Borders::ALL)
                 .title("Keys")
                 .border_style(Style::default().fg(
-                    match &game.game_state.current_pane {
-                        WindowPanes::AutoPane => Color::Green,
-                        _ => Color::White,
-                    },
+                        match &game.game_state.current_pane {
+                            WindowPanes::AutoPane => Color::Green,
+                            _ => Color::White,
+                        },
                 )),
-        ),
-        columns[2],
-    );
+            ),
+            columns[1],
+        );
+    }
 }

@@ -5,7 +5,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use rand;
 
-use crate::BigNum::BigDollar;
+use crate::big_num::BigDollar;
 use crate::upgrade::{get_upgrades, UpgradeId};
 
 const WASTELAND: &str = include_str!("../assets/wasteland.txt");
@@ -45,6 +45,7 @@ pub struct GameState {
     pub trust_level: i32,
     pub base_letter_value: BigDollar,
     pub streaks_unlocked: bool,
+    pub automation_unlocked: bool,
     pub disable_penalty: bool,
 
     // top left is 0, 0
@@ -76,9 +77,10 @@ impl Game {
             game_state: GameState {
                 total_money_earned: BigDollar::from(0),
                 upgrade_levels: HashMap::new(),
-                base_letter_value: BigDollar::from(1),
+                base_letter_value: BigDollar::from(0.003),
                 trust_level: 0,
                 streaks_unlocked: false,
+                automation_unlocked: false,
                 disable_penalty: false,
                 counts: HashMap::new(),
                 typed: String::new(),
@@ -145,13 +147,27 @@ impl Game {
 
 
     fn recalculate_current_pane(&mut self) {
-        self.game_state.current_pane = match (self.game_state.window_x, self.game_state.window_y) {
-            (0, _) => WindowPanes::HelpPane,
-            (1, 0) => WindowPanes::UpgradePane,
-            (1, 1) => WindowPanes::TextPane,
-            (2, _) => WindowPanes::AutoPane,
-            _ => WindowPanes::TextPane,
-        };
+        match self.game_state.automation_unlocked {
+            true => {
+                self.game_state.window_x = self.game_state.window_x.min(2);
+                self.game_state.current_pane = match (self.game_state.window_x, self.game_state.window_y) {
+                    (0, _) => WindowPanes::HelpPane,
+                    (1, 0) => WindowPanes::UpgradePane,
+                    (1, 1) => WindowPanes::TextPane,
+                    _ => WindowPanes::TextPane,
+                }
+            }
+            false => {
+                self.game_state.window_x = self.game_state.window_x.min(1);
+                self.game_state.current_pane = match (self.game_state.window_x, self.game_state.window_y) {
+                    (0, _) => WindowPanes::HelpPane,
+                    (1, 0) => WindowPanes::UpgradePane,
+                    (1, 1) => WindowPanes::TextPane,
+                    (2, _) => WindowPanes::AutoPane,
+                    _ => WindowPanes::TextPane,
+                };
+            }
+        }
     }
 
     fn toggle_upgrade_pane(&mut self) {
