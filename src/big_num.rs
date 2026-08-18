@@ -286,6 +286,12 @@ impl Ord for BigDollar {
     }
 }
 
+impl From<BigDollar> for f64 {
+    fn from (value: BigDollar) -> Self {
+        value.0
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

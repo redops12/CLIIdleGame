@@ -17,12 +17,14 @@ pub const NUM_LETTERS: usize = 26;
 pub const LETTER_QUEUE_HEIGHT: usize = 10;
 pub const MAX_TRUST_LEVEL: i32 = 100;
 pub const TRUST_SCALE: f64 = 1.15;
+pub const SECOND_POLL_WINDOW: usize = 30;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WindowPanes {
     TextPane,
     UpgradePane,
     AutoPane,
+    GraphPane,
 }
 
 pub const UPGRADE_KEYS: [char; 10] = ['q', 'w', 'e', 'r', 't', 'a', 's', 'd', 'f', 'g'];
@@ -55,6 +57,8 @@ pub struct GameState {
     // secret stats
     pub high_water_money: BigDollar,
     pub total_money_earned: BigDollar,
+    pub second_profit_buckets: Vec<BigDollar>, // tracks income from each second for the last SECOND_POLL_WINDOW seconds
+    pub second_profit_bucket_head: usize,
 
     // progression variables
     pub upgrade_levels: HashMap<UpgradeId, usize>,
@@ -64,6 +68,7 @@ pub struct GameState {
     pub capital_letter_bonus_unlocked: bool,
     pub automation_unlocked: bool,
     pub seniority_level: u8,
+    pub graphs_unlocked: bool,
     pub letter_compression_unlocked: bool,
     pub disable_penalty: bool,
 
@@ -96,6 +101,8 @@ impl Default for GameState {
             money: BigDollar::from(0),
             high_water_money: BigDollar::from(0),
             total_money_earned: BigDollar::from(0),
+            second_profit_buckets: vec![BigDollar::from(0); SECOND_POLL_WINDOW + 1],
+            second_profit_bucket_head: 0,
             upgrade_levels: HashMap::new(),
             trust_level: 0,
             base_letter_value: BigDollar::from(0.003),
@@ -103,13 +110,14 @@ impl Default for GameState {
             capital_letter_bonus_unlocked: false,
             automation_unlocked: false,
             seniority_level: 0,
+            graphs_unlocked: false,
             letter_compression_unlocked: false,
             disable_penalty: false,
             window_x: 1,
-            window_y: 1,
+            window_y: 0,
             current_pane: WindowPanes::TextPane,
             previous_window_x: 1,
-            previous_window_y: 1,
+            previous_window_y: 0,
             letter_queue: [[' '; LETTER_QUEUE_HEIGHT]; NUM_LETTERS],
         }
     }
@@ -121,6 +129,7 @@ pub struct Game {
 
     pub last_spawn_time: std::time::Instant,
     pub last_update_time: std::time::Instant,
+    pub last_profit_time: std::time::Instant,
     pub game_state: GameState,
 }
 
@@ -135,6 +144,7 @@ impl Game {
             should_quit: false,
             last_spawn_time: std::time::Instant::now(),
             last_update_time: std::time::Instant::now(),
+            last_profit_time: std::time::Instant::now(),
             game_state,
         }
     }
@@ -157,10 +167,12 @@ impl Game {
         self.game_state.money += amount;
         self.game_state.high_water_money = self.game_state.high_water_money.max(self.game_state.money);
         self.game_state.total_money_earned += amount;
+        self.game_state.second_profit_buckets[self.game_state.second_profit_bucket_head] += amount;
     }
 
     pub fn decrement_money(&mut self, amount: BigDollar) {
         self.game_state.money -= amount;
+        self.game_state.second_profit_buckets[self.game_state.second_profit_bucket_head] -= amount;
     }
 
     pub fn increment(&mut self, key: &str) {
@@ -217,16 +229,16 @@ impl Game {
             false => {
                 self.game_state.window_x = self.game_state.window_x.min(0);
                 self.game_state.current_pane = match (self.game_state.window_x, self.game_state.window_y) {
-                    (0, 0) => WindowPanes::UpgradePane,
-                    (0, 1) => WindowPanes::TextPane,
+                    (0, 0) => WindowPanes::TextPane,
+                    (0, 1) => WindowPanes::UpgradePane,
                     _ => WindowPanes::TextPane,
                 }
             }
             true => {
                 self.game_state.window_x = self.game_state.window_x.min(1);
                 self.game_state.current_pane = match (self.game_state.window_x, self.game_state.window_y) {
-                    (0, 0) => WindowPanes::UpgradePane,
-                    (0, 1) => WindowPanes::TextPane,
+                    (0, 0) => WindowPanes::TextPane,
+                    (0, 1) => WindowPanes::UpgradePane,
                     (1, _) => WindowPanes::AutoPane,
                     _ => WindowPanes::TextPane,
                 };
@@ -245,7 +257,7 @@ impl Game {
                 self.game_state.previous_window_x = self.game_state.window_x;
                 self.game_state.previous_window_y = self.game_state.window_y;
                 self.game_state.window_x = 0;
-                self.game_state.window_y = 0;
+                self.game_state.window_y = 1;
             }
         }
         self.recalculate_current_pane();
@@ -446,8 +458,17 @@ impl Game {
         }
     }
 
+    fn handle_tracking(&mut self, now: std::time::Instant) {
+        if now - self.last_profit_time >= std::time::Duration::from_secs(1) {
+            self.last_profit_time = now;
+            self.game_state.second_profit_bucket_head = (self.game_state.second_profit_bucket_head + 1) % (SECOND_POLL_WINDOW + 1);
+            self.game_state.second_profit_buckets[self.game_state.second_profit_bucket_head] = BigDollar::from(0);
+        }
+    }
+
     pub fn update(&mut self, now: std::time::Instant) {
         self.update_handle_inputs();
+        self.handle_tracking(now);
 
         if now - self.last_update_time >= std::time::Duration::from_millis(200) {
             self.last_update_time = now;

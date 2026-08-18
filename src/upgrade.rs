@@ -15,6 +15,7 @@ pub enum UpgradeId {
     CapitalLetterBonus,
     UnlockAutomation,
     Seniority,
+    Graphs,
     LetterCompression,
     DisablePenalty,
 }
@@ -101,6 +102,17 @@ static UPGRADES: LazyLock<BTreeMap<UpgradeId, Upgrade>> = LazyLock::new(|| {
                 // description: "More experience, more value",
                 upgrade_unlock_condition: |game| game.high_water_money >= BigDollar::from(5.0),
                 on_buy: |game| game.seniority_level += 1,
+            },
+        ),
+        (
+            UpgradeId::Graphs,
+            Upgrade {
+                costs: vec![BigDollar::from(50.0)],
+                infinite: false,
+                name: "Graphs",
+                // description: "Visualize your progress",
+                upgrade_unlock_condition: |game| game.high_water_money >= BigDollar::from(10.0),
+                on_buy: |game| game.graphs_unlocked = true,
             },
         ),
         (

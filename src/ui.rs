@@ -1,12 +1,14 @@
+use core::f64;
 use std::collections::HashMap;
 
 use ratatui::layout::{Constraint, Layout};
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::{Block, Borders, Paragraph, Axis, Chart, Dataset, GraphType};
+use ratatui::symbols::Marker;
 use ratatui::Frame;
 
-use crate::game::{Game, WindowPanes, LETTER_QUEUE_HEIGHT, NUM_LETTERS, UPGRADE_KEYS};
+use crate::game::{Game, LETTER_QUEUE_HEIGHT, NUM_LETTERS, SECOND_POLL_WINDOW, UPGRADE_KEYS, WindowPanes};
 
 use crate::upgrade::get_upgrades;
 
@@ -37,6 +39,30 @@ fn auto_row_width(cols: usize) -> usize {
 /// Pane width: content plus left/right borders.
 fn auto_pane_width(cols: usize) -> u16 {
     (auto_row_width(cols) + 2) as u16
+}
+
+fn format_chart_value(value: f64) -> String {
+    BigDollar::from(value).to_string()
+}
+
+fn profit_chart_y_bounds(data_min: f64, data_max: f64) -> [f64; 2] {
+    let mut min = data_min.min(0.0);
+    let mut max = data_max.max(0.0);
+    if (max - min).abs() < f64::EPSILON {
+        min -= 1.0;
+        max += 1.0;
+    }
+    let pad = (max - min) * 0.05;
+    [min - pad, max + pad]
+}
+
+fn profit_chart_y_labels(y_bounds: [f64; 2]) -> [String; 3] {
+    let mid = (y_bounds[0] + y_bounds[1]) / 2.0;
+    [
+        format_chart_value(y_bounds[0]),
+        format_chart_value(mid),
+        format_chart_value(y_bounds[1]),
+    ]
 }
 
 fn auto_row(cells: impl IntoIterator<Item = (char, Color)>) -> Line<'static> {
@@ -170,10 +196,10 @@ fn typing_zone(game: &Game, width: u16) -> Vec<Line<'static>> {
                 Span::styled(c.to_string(), Style::default().fg(Color::Green))
             }
             Some(&c) if c != *e && !c.is_whitespace() => {
-                Span::styled(c.to_string(), Style::default().fg(Color::Red))
+                Span::styled(c.to_string(), Style::default().fg(Color::Red).add_modifier(ratatui::style::Modifier::CROSSED_OUT))
             }
             Some(&c) if c != *e && c.is_whitespace() => {
-                Span::styled(c.to_string(), Style::default().bg(Color::Red))
+                Span::styled(c.to_string(), Style::default().bg(Color::Red).add_modifier(ratatui::style::Modifier::CROSSED_OUT))
             }
             Some(&_) => Span::styled(e.to_string(), Style::default().fg(Color::White)),
             None if i == typed_chars.len() => Span::styled(e.to_string(), Style::default().fg(Color::White).bg(GRAY_DIM)),
@@ -219,19 +245,26 @@ fn typing_zone(game: &Game, width: u16) -> Vec<Line<'static>> {
 }
 
 pub fn ui(frame: &mut Frame, game: &Game) {
-    let columns = if game.game_state.automation_unlocked {
-        Layout::horizontal([
-            Constraint::Fill(2),
-            Constraint::Length(auto_pane_width(NUM_LETTERS)),
-        ])
-        .split(frame.area())
-    } else {
-        Layout::horizontal([Constraint::Fill(2)]).split(frame.area())
-    };
+    let mut column_constraints = vec![Constraint::Fill(2)];
+    let mut keys_column = None;
+    let mut graph_column = None;
+    let mut next_column = 1;
+
+    if game.game_state.automation_unlocked {
+        column_constraints.push(Constraint::Length(auto_pane_width(NUM_LETTERS)));
+        keys_column = Some(next_column);
+        next_column += 1;
+    }
+    if game.game_state.graphs_unlocked {
+        column_constraints.push(Constraint::Length(SECOND_POLL_WINDOW as u16 * 2 + 2));
+        graph_column = Some(next_column);
+    }
+
+    let columns = Layout::horizontal(column_constraints).split(frame.area());
 
     let middle = Layout::vertical([
+        Constraint::Length(7),
         Constraint::Min(5),
-        Constraint::Length(5),
     ])
     .split(columns[0]);
 
@@ -240,16 +273,16 @@ pub fn ui(frame: &mut Frame, game: &Game) {
         Paragraph::new(upgrade_zone(game, upgrade_text_width)).block(
             Block::default()
                 .borders(Borders::ALL)
-                .title("Statsfalse")
+                .title("Upgrades")
                 .border_style(
                     Style::default().fg(
                         match &game.game_state.current_pane {
-                           WindowPanes::UpgradePane => Color::Green,
+                           WindowPanes::UpgradePane => Color::Cyan,
                            _ => Color::White,
                         }
                     )
                 )),
-        middle[0],
+        middle[1],
     );
 
     // Inner width accounts for left/right borders.
@@ -261,16 +294,16 @@ pub fn ui(frame: &mut Frame, game: &Game) {
                 .title("Text").border_style(
                     Style::default().fg(
                         match &game.game_state.current_pane {
-                           WindowPanes::TextPane => Color::Green,
+                           WindowPanes::TextPane => Color::Cyan,
                            _ => Color::White,
                         }
                     )
                 )),
-        middle[1],
+        middle[0],
     );
 
-    if game.game_state.automation_unlocked {
-        let keys_height = columns[1].height.saturating_sub(2);
+    if let Some(col) = keys_column {
+        let keys_height = columns[col].height.saturating_sub(2);
         frame.render_widget(
             Paragraph::new(auto_zone(game, keys_height)).block(
                 Block::default()
@@ -278,12 +311,76 @@ pub fn ui(frame: &mut Frame, game: &Game) {
                 .title("Keys")
                 .border_style(Style::default().fg(
                         match &game.game_state.current_pane {
-                            WindowPanes::AutoPane => Color::Green,
+                            WindowPanes::AutoPane => Color::Cyan,
                             _ => Color::White,
                         },
                 )),
             ),
-            columns[1],
+            columns[col],
+        );
+    }
+
+    if let Some(col) = graph_column {
+        // go around ring buffer starting from head + 1 and going to head - 1
+        // wrapping around if necessary
+        let mut v: Vec<(f64, f64)> = Vec::new();
+        for i in 0..SECOND_POLL_WINDOW {
+            let idx = (game.game_state.second_profit_bucket_head + 1 + i) % (SECOND_POLL_WINDOW + 1);
+            let value = game.game_state.second_profit_buckets[idx];
+            v.push((i as f64, value.into()));
+        }
+        let data: &[(f64, f64)] = &v;
+        let min_profit = data.iter().copied().map(|(_, v)| v).fold(f64::INFINITY, f64::min);
+        let max_profit = data.iter().copied().map(|(_, v)| v).fold(f64::NEG_INFINITY, f64::max);
+        let y_bounds = profit_chart_y_bounds(min_profit, max_profit);
+        let y_labels = profit_chart_y_labels(y_bounds);
+        let x_max = SECOND_POLL_WINDOW as f64;
+        let zero_line = [(0.0, 0.0), (x_max, 0.0)];
+
+        let chart = Chart::new(vec![
+            Dataset::default()
+                .graph_type(GraphType::Line)
+                .marker(Marker::Dot)
+                .style(Style::default().fg(GRAY_MID))
+                .data(&zero_line),
+            Dataset::default()
+                .name("PPS")
+                .marker(Marker::Braille)
+                .graph_type(GraphType::Line)
+                .style(Color::Cyan)
+                .data(data),
+        ])
+        .x_axis(
+            Axis::default()
+                .bounds([0.0, x_max])
+                .title("Seconds")
+                .labels([
+                    "0".to_string(),
+                    ((x_max / 2.0) as u32).to_string(),
+                    (x_max as u32).to_string(),
+                ])
+                .style(Style::default().fg(GRAY_MID)),
+        )
+        .y_axis(
+            Axis::default()
+                .bounds(y_bounds)
+                .title("PPS")
+                .labels(y_labels)
+                .style(Style::default().fg(GRAY_MID)),
+        );
+        frame.render_widget(
+            chart.block(
+                Block::default()
+                .borders(Borders::ALL)
+                .title("Graphs")
+                .border_style(Style::default().fg(
+                        match &game.game_state.current_pane {
+                            WindowPanes::GraphPane => Color::Cyan,
+                            _ => Color::White,
+                        },
+                )),
+            ),
+            columns[col],
         );
     }
 }
