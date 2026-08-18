@@ -40,14 +40,16 @@ impl BigDollar {
         }
         let sign = if milli < 0 { "-" } else { "" };
         let abs = milli.abs();
-        let whole = abs / 1_000;
-        let frac = abs % 1_000;
+        // Round to nearest cent (2 decimal places).
+        let rounded = (abs + 5) / 10 * 10;
+        let whole = rounded / 1_000;
+        let frac = (rounded % 1_000) / 10;
         if frac == 0 {
             format!("{}{}", sign, whole)
         } else if whole == 0 {
-            format!("{}0.{:03}", sign, frac)
+            format!("{}0.{:02}", sign, frac)
         } else {
-            format!("{}{}.{:03}", sign, whole, frac)
+            format!("{}{}.{:02}", sign, whole, frac)
         }
     }
 
@@ -299,28 +301,28 @@ mod tests {
     #[test]
     fn from_int_uses_milli_units() {
         assert_eq!(BigDollar::from(0).format_amount(), "0");
-        assert_eq!(BigDollar::from(1).format_amount(), "0.001");
-        assert_eq!(BigDollar::from(42).format_amount(), "0.042");
+        assert_eq!(BigDollar::from(1).format_amount(), "0");
+        assert_eq!(BigDollar::from(42).format_amount(), "0.04");
         assert_eq!(BigDollar::from(1000).format_amount(), "1");
-        assert_eq!(BigDollar::from(1500).format_amount(), "1.500");
-        assert_eq!(BigDollar::from(-7).format_amount(), "-0.007");
-        assert_eq!(BigDollar::from(1).to_string(), "$0.001");
+        assert_eq!(BigDollar::from(1500).format_amount(), "1.50");
+        assert_eq!(BigDollar::from(-7).format_amount(), "-0.01");
+        assert_eq!(BigDollar::from(1).to_string(), "$0");
         assert_eq!(BigDollar::from(1000).to_string(), "$1");
     }
 
     #[test]
-    fn plain_values_format_with_milli_precision() {
+    fn plain_values_format_with_cent_precision() {
         assert_eq!(BigDollar::from(0).format_amount(), "0");
-        assert_eq!(BigDollar::from(42).format_amount(), "0.042");
-        assert_eq!(BigDollar::from(-7).format_amount(), "-0.007");
-        assert_eq!(BigDollar::from(999_999).format_amount(), "999.999");
+        assert_eq!(BigDollar::from(42).format_amount(), "0.04");
+        assert_eq!(BigDollar::from(-7).format_amount(), "-0.01");
+        assert_eq!(BigDollar::from(999_999).format_amount(), "1000");
     }
 
     #[test]
     fn large_values_use_abbreviated_form() {
         assert_eq!(BigDollar::from(1_000_000).format_amount(), "1000");
-        assert_eq!(BigDollar::from(1_234_567).format_amount(), "1234.567");
-        assert_eq!(BigDollar::from(999_999_999).format_amount(), "999999.999");
+        assert_eq!(BigDollar::from(1_234_567).format_amount(), "1234.57");
+        assert_eq!(BigDollar::from(999_999_999).format_amount(), "1000000");
         assert_eq!(BigDollar::from(1_000_000_000_i64).format_amount(), "1.000 M");
         assert_eq!(BigDollar::from(1_234_567_000_i64).format_amount(), "1.235 M");
         assert_eq!(BigDollar::from(1_500_000_000_i64).format_amount(), "1.500 M");
@@ -351,7 +353,7 @@ mod tests {
 
     #[test]
     fn from_f64_uses_display_units() {
-        assert_eq!(BigDollar::from(1.5).format_amount(), "1.500");
+        assert_eq!(BigDollar::from(1.5).format_amount(), "1.50");
         assert_eq!(BigDollar::from(1_500_000.0).format_amount(), "1.500 M");
     }
 
@@ -444,9 +446,9 @@ mod tests {
     #[test]
     fn display_prefixes_dollar_sign() {
         assert_eq!(BigDollar::from(0).to_string(), "$0");
-        assert_eq!(BigDollar::from(42_i32).to_string(), "$0.042");
+        assert_eq!(BigDollar::from(42_i32).to_string(), "$0.04");
         assert_eq!(BigDollar::from(1_000_000_000_i64).to_string(), "$1.000 M");
-        assert_eq!(BigDollar::from(-7_i32).to_string(), "-$0.007");
+        assert_eq!(BigDollar::from(-7_i32).to_string(), "-$0.01");
     }
 
     #[test]
@@ -502,7 +504,7 @@ mod tests {
 
     #[test]
     fn display_rounds_f64_noise_in_plain_values() {
-        assert_eq!(BigDollar(0.1 + 0.2).format_amount(), "0.300");
+        assert_eq!(BigDollar(0.1 + 0.2).format_amount(), "0.30");
         assert_eq!(BigDollar(1.0 / 3.0 * 3.0).format_amount(), "1");
 
         let mut sum = BigDollar(0.0);
@@ -522,21 +524,21 @@ mod tests {
                 "upgrade cost level {i} was not a plain number: {rendered}"
             );
         }
-        assert_eq!(BigDollar(50.0 * 1.1_f64.powi(5)).format_amount(), "80.526");
-        assert_eq!(BigDollar(50.0 * 1.1_f64.powi(49)).format_amount(), "5335.948");
+        assert_eq!(BigDollar(50.0 * 1.1_f64.powi(5)).format_amount(), "80.53");
+        assert_eq!(BigDollar(50.0 * 1.1_f64.powi(49)).format_amount(), "5335.95");
     }
 
     #[test]
     fn display_rounds_trust_multiplier_values() {
         let base = BigDollar::from(1);
-        assert_eq!((base * 2.0_f64.powi(10)).format_amount(), "1.024");
-        assert_eq!((base * 2.0_f64.powi(20)).format_amount(), "1048.576");
+        assert_eq!((base * 2.0_f64.powi(10)).format_amount(), "1.02");
+        assert_eq!((base * 2.0_f64.powi(20)).format_amount(), "1048.58");
     }
 
     #[test]
     fn display_switches_to_abbreviated_after_milli_rounding() {
         assert_eq!(BigDollar(999_999.9995).format_amount(), "1.000 M");
-        assert_eq!(BigDollar(999_999.9994).format_amount(), "999999.999");
+        assert_eq!(BigDollar(999_999.9994).format_amount(), "1000000");
         assert_eq!(BigDollar(1_000_000.0).format_amount(), "1.000 M");
     }
 
@@ -565,6 +567,6 @@ mod tests {
     #[test]
     fn display_rounds_division_remainders() {
         assert_eq!((BigDollar(1500.0) / 3).format_amount(), "500");
-        assert_eq!((BigDollar(1000.0) / 3).format_amount(), "333.333");
+        assert_eq!((BigDollar(1000.0) / 3).format_amount(), "333.33");
     }
 }
