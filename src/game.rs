@@ -3,7 +3,7 @@ use std::io;
 use std::path::Path;
 
 use crossbeam_channel::Receiver;
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
 use rand;
 use serde::{Deserialize, Serialize};
@@ -28,6 +28,19 @@ pub enum WindowPanes {
 }
 
 pub const UPGRADE_KEYS: [char; 10] = ['q', 'w', 'e', 'r', 't', 'a', 's', 'd', 'f', 'g'];
+
+pub enum InputEvent {
+    Key(KeyEvent),
+    Mouse(MouseEvent),
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PaneRects {
+    pub text: ratatui::layout::Rect,
+    pub upgrade: ratatui::layout::Rect,
+    pub auto_keys: Option<ratatui::layout::Rect>,
+    pub graph: Option<ratatui::layout::Rect>,
+}
 
 fn idx_to_letter(idx: usize) -> char {
     (b'a' + idx as u8) as char
@@ -124,8 +137,9 @@ impl Default for GameState {
 }
 
 pub struct Game {
-    input_rx: Receiver<KeyEvent>,
+    input_rx: Receiver<InputEvent>,
     pub should_quit: bool,
+    pub pane_rects: PaneRects,
 
     pub last_spawn_time: std::time::Instant,
     pub last_update_time: std::time::Instant,
@@ -134,14 +148,15 @@ pub struct Game {
 }
 
 impl Game {
-    pub fn new(input_rx: Receiver<KeyEvent>) -> Self {
+    pub fn new(input_rx: Receiver<InputEvent>) -> Self {
         Self::from_state(input_rx, Self::default_state())
     }
 
-    pub fn from_state(input_rx: Receiver<KeyEvent>, game_state: GameState) -> Self {
+    pub fn from_state(input_rx: Receiver<InputEvent>, game_state: GameState) -> Self {
         Self {
             input_rx,
             should_quit: false,
+            pane_rects: PaneRects::default(),
             last_spawn_time: std::time::Instant::now(),
             last_update_time: std::time::Instant::now(),
             last_profit_time: std::time::Instant::now(),
@@ -263,6 +278,27 @@ impl Game {
         self.recalculate_current_pane();
     }
 
+    pub fn handle_mouse_click(&mut self, column: u16, row: u16) {
+        use ratatui::layout::Position;
+
+        let pos = Position { x: column, y: row };
+        if self.pane_rects.text.contains(pos) {
+            self.game_state.window_x = 0;
+            self.game_state.window_y = 0;
+            self.game_state.current_pane = WindowPanes::TextPane;
+        } else if self.pane_rects.upgrade.contains(pos) {
+            self.game_state.window_x = 0;
+            self.game_state.window_y = 1;
+            self.game_state.current_pane = WindowPanes::UpgradePane;
+        } else if self.pane_rects.auto_keys.is_some_and(|rect| rect.contains(pos)) {
+            self.game_state.window_x = 1;
+            self.game_state.window_y = 0;
+            self.game_state.current_pane = WindowPanes::AutoPane;
+        } else if self.pane_rects.graph.is_some_and(|rect| rect.contains(pos)) {
+            self.game_state.current_pane = WindowPanes::GraphPane;
+        }
+    }
+
     fn text_pane_input(&mut self, key: KeyCode) {
         match key {
             KeyCode::Char(c) => {
@@ -353,32 +389,41 @@ impl Game {
     }
 
     fn update_handle_inputs(&mut self) {
-        while let Ok(key) = self.input_rx.try_recv() {
-            match key.code {
-                KeyCode::Esc => self.should_quit = true,
-                KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    self.should_quit = true;
-                }
-                KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    self.should_quit = true;
-                }
-                KeyCode::Tab => self.toggle_upgrade_pane(),
-                KeyCode::Up => self.game_state.window_y = self.game_state.window_y.saturating_sub(1),
-                KeyCode::Down => self.game_state.window_y = self.game_state.window_y.saturating_add(1).min(1),
-                KeyCode::Left => self.game_state.window_x = self.game_state.window_x.saturating_sub(1),
-                KeyCode::Right => self.game_state.window_x = self.game_state.window_x.saturating_add(1).min(1),
-                _ => {}
-            }
-            self.recalculate_current_pane();
-            match self.game_state.current_pane {
-                WindowPanes::TextPane => self.text_pane_input(key.code),
-                WindowPanes::UpgradePane => self.upgrade_pane_input(key.code),
-                WindowPanes::AutoPane => {
-                    if let KeyCode::Char(c) = key.code {
-                        self.increment(&c.to_string());
+        while let Ok(input) = self.input_rx.try_recv() {
+            match input {
+                InputEvent::Mouse(mouse) => {
+                    if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
+                        self.handle_mouse_click(mouse.column, mouse.row);
                     }
                 }
-                _ => {}
+                InputEvent::Key(key) => {
+                    match key.code {
+                        KeyCode::Esc => self.should_quit = true,
+                        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            self.should_quit = true;
+                        }
+                        KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            self.should_quit = true;
+                        }
+                        KeyCode::Tab => self.toggle_upgrade_pane(),
+                        KeyCode::Up => self.game_state.window_y = self.game_state.window_y.saturating_sub(1),
+                        KeyCode::Down => self.game_state.window_y = self.game_state.window_y.saturating_add(1).min(1),
+                        KeyCode::Left => self.game_state.window_x = self.game_state.window_x.saturating_sub(1),
+                        KeyCode::Right => self.game_state.window_x = self.game_state.window_x.saturating_add(1).min(1),
+                        _ => {}
+                    }
+                    self.recalculate_current_pane();
+                    match self.game_state.current_pane {
+                        WindowPanes::TextPane => self.text_pane_input(key.code),
+                        WindowPanes::UpgradePane => self.upgrade_pane_input(key.code),
+                        WindowPanes::AutoPane => {
+                            if let KeyCode::Char(c) = key.code {
+                                self.increment(&c.to_string());
+                            }
+                        }
+                        _ => {}
+                    }
+                }
             }
         }
     }

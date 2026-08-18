@@ -1,14 +1,14 @@
 use core::f64;
 use std::collections::HashMap;
 
-use ratatui::layout::{Constraint, Layout};
+use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Axis, Chart, Dataset, GraphType};
 use ratatui::symbols::Marker;
 use ratatui::Frame;
 
-use crate::game::{Game, LETTER_QUEUE_HEIGHT, NUM_LETTERS, SECOND_POLL_WINDOW, UPGRADE_KEYS, WindowPanes};
+use crate::game::{Game, LETTER_QUEUE_HEIGHT, NUM_LETTERS, SECOND_POLL_WINDOW, UPGRADE_KEYS, WindowPanes, PaneRects};
 
 use crate::upgrade::get_upgrades;
 
@@ -16,6 +16,37 @@ use crate::big_num::BigDollar;
 
 const GRAY_DIM: Color = Color::Rgb(80, 80, 80);
 const GRAY_MID: Color = Color::Rgb(140, 140, 140);
+
+pub fn compute_pane_layout(area: Rect, game: &Game) -> PaneRects {
+    let mut column_constraints = vec![Constraint::Fill(2)];
+    let mut keys_column = None;
+    let mut graph_column = None;
+    let mut next_column = 1;
+
+    if game.game_state.automation_unlocked {
+        column_constraints.push(Constraint::Length(auto_pane_width(NUM_LETTERS)));
+        keys_column = Some(next_column);
+        next_column += 1;
+    }
+    if game.game_state.graphs_unlocked {
+        column_constraints.push(Constraint::Length(SECOND_POLL_WINDOW as u16 * 2 + 2));
+        graph_column = Some(next_column);
+    }
+
+    let columns = Layout::horizontal(column_constraints).split(area);
+    let middle = Layout::vertical([
+        Constraint::Length(7),
+        Constraint::Min(5),
+    ])
+    .split(columns[0]);
+
+    PaneRects {
+        text: middle[0],
+        upgrade: middle[1],
+        auto_keys: keys_column.map(|col| columns[col]),
+        graph: graph_column.map(|col| columns[col]),
+    }
+}
 
 fn key_count(counts: &HashMap<String, u32>, key: &str) -> u32 {
     *counts.get(key).unwrap_or(&0)
@@ -244,31 +275,10 @@ fn typing_zone(game: &Game, width: u16) -> Vec<Line<'static>> {
     ]
 }
 
-pub fn ui(frame: &mut Frame, game: &Game) {
-    let mut column_constraints = vec![Constraint::Fill(2)];
-    let mut keys_column = None;
-    let mut graph_column = None;
-    let mut next_column = 1;
+pub fn ui(frame: &mut Frame, game: &Game) -> PaneRects {
+    let pane_rects = compute_pane_layout(frame.area(), game);
 
-    if game.game_state.automation_unlocked {
-        column_constraints.push(Constraint::Length(auto_pane_width(NUM_LETTERS)));
-        keys_column = Some(next_column);
-        next_column += 1;
-    }
-    if game.game_state.graphs_unlocked {
-        column_constraints.push(Constraint::Length(SECOND_POLL_WINDOW as u16 * 2 + 2));
-        graph_column = Some(next_column);
-    }
-
-    let columns = Layout::horizontal(column_constraints).split(frame.area());
-
-    let middle = Layout::vertical([
-        Constraint::Length(7),
-        Constraint::Min(5),
-    ])
-    .split(columns[0]);
-
-    let upgrade_text_width = middle[1].width.saturating_sub(2);
+    let upgrade_text_width = pane_rects.upgrade.width.saturating_sub(2);
     frame.render_widget(
         Paragraph::new(upgrade_zone(game, upgrade_text_width)).block(
             Block::default()
@@ -282,11 +292,11 @@ pub fn ui(frame: &mut Frame, game: &Game) {
                         }
                     )
                 )),
-        middle[1],
+        pane_rects.upgrade,
     );
 
     // Inner width accounts for left/right borders.
-    let typing_text_width = middle[1].width.saturating_sub(2);
+    let typing_text_width = pane_rects.upgrade.width.saturating_sub(2);
     frame.render_widget(
         Paragraph::new(typing_zone(game, typing_text_width))
             .block(Block::default()
@@ -299,11 +309,11 @@ pub fn ui(frame: &mut Frame, game: &Game) {
                         }
                     )
                 )),
-        middle[0],
+        pane_rects.text,
     );
 
-    if let Some(col) = keys_column {
-        let keys_height = columns[col].height.saturating_sub(2);
+    if let Some(auto_rect) = pane_rects.auto_keys {
+        let keys_height = auto_rect.height.saturating_sub(2);
         frame.render_widget(
             Paragraph::new(auto_zone(game, keys_height)).block(
                 Block::default()
@@ -316,11 +326,11 @@ pub fn ui(frame: &mut Frame, game: &Game) {
                         },
                 )),
             ),
-            columns[col],
+            auto_rect,
         );
     }
 
-    if let Some(col) = graph_column {
+    if let Some(graph_rect) = pane_rects.graph {
         // go around ring buffer starting from head + 1 and going to head - 1
         // wrapping around if necessary
         let mut v: Vec<(f64, f64)> = Vec::new();
@@ -380,7 +390,9 @@ pub fn ui(frame: &mut Frame, game: &Game) {
                         },
                 )),
             ),
-            columns[col],
+            graph_rect,
         );
     }
+
+    pane_rects
 }
