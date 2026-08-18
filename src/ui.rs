@@ -181,6 +181,15 @@ fn render_money_bar(frame: &mut Frame, area: Rect, game: &Game) {
     );
 }
 
+struct UpgradeRow {
+    key: char,
+    level: String,
+    cost: String,
+    name: &'static str,
+    color: Color,
+    can_buy: bool,
+}
+
 fn upgrade_zone(game: &Game) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
 
@@ -190,29 +199,58 @@ fn upgrade_zone(game: &Game) -> Vec<Line<'static>> {
     if game.game_state.seniority_level > 0 {
         lines.push(Line::from(Span::raw(format!("Seniority: {}", game.game_state.seniority_level))));
     }
+
+    let mut rows = Vec::new();
     for (i, kind) in game.get_displayed_upgrades().iter().enumerate() {
         let upgrade = get_upgrades().get(kind).unwrap();
         let level = game.game_state.upgrade_levels.get(kind).copied().unwrap_or(0);
         let max_level = upgrade.costs.len();
         let cost: BigDollar = upgrade.costs.get(level).copied().unwrap_or(BigDollar::from(0));
-        let name = upgrade.name;
         let button = UPGRADE_KEYS.get(i).copied().unwrap_or('?');
-        let color = if game.game_state.money >= cost || cost == BigDollar::from(0) {
+        let can_buy = game.game_state.money >= cost || cost == BigDollar::from(0);
+        let color = if can_buy {
             Color::Green
         } else {
             GRAY_MID
         };
-        if upgrade.infinite {
-            lines.push(Line::from(Span::styled(
-                format!("[{button}] {cost}|{name}"),
-                Style::default().fg(color),
-            )));
+        let level_str = if upgrade.infinite {
+            String::new()
         } else {
-            lines.push(Line::from(Span::styled(
-                format!("[{button}]({level}/{max_level}) {cost}|{name}"),
-                Style::default().fg(color),
-            )));
+            format!("({level}/{max_level})")
+        };
+        rows.push(UpgradeRow {
+            key: button,
+            level: level_str,
+            cost: cost.to_string(),
+            name: upgrade.name,
+            color,
+            can_buy,
+        });
+    }
+
+    let level_width = rows.iter().map(|row| row.level.len()).max().unwrap_or(0);
+    let cost_width = rows.iter().map(|row| row.cost.len()).max().unwrap_or(0);
+
+    for row in rows {
+        let text = if level_width > 0 {
+            format!(
+                "[{}] {:level_w$} {:>cost_w$} {}",
+                row.key, row.level, row.cost, row.name,
+                level_w = level_width,
+                cost_w = cost_width,
+            )
+        } else {
+            format!(
+                "[{}] {:>cost_w$} {}",
+                row.key, row.cost, row.name,
+                cost_w = cost_width,
+            )
+        };
+        let mut style = Style::default().fg(row.color);
+        if row.can_buy {
+            style = style.add_modifier(Modifier::BOLD);
         }
+        lines.push(Line::from(Span::styled(text, style)));
     }
     lines
 }

@@ -24,14 +24,14 @@ the boy can type
 the girl can type
 the boy can write
 the girl can write
-the boy can think
-the girl cannot think
-the boy types a word
+the girl can think
+the boy cannot think
+the boy types many words
 the girl types a word
 the boy writes a line
 the girl writes a line
 there are only boys and girls
-the boy does not has a plan
+the boy does not have a plan
 the girl has a plan
 the plan is simple
 the plan is not mine
