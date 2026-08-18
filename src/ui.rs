@@ -186,6 +186,7 @@ struct UpgradeRow {
     level: String,
     cost: String,
     name: &'static str,
+    description: &'static str,
     color: Color,
     can_buy: bool,
 }
@@ -223,6 +224,7 @@ fn upgrade_zone(game: &Game) -> Vec<Line<'static>> {
             level: level_str,
             cost: cost.to_string(),
             name: upgrade.name,
+            description: upgrade.description,
             color,
             can_buy,
         });
@@ -230,20 +232,23 @@ fn upgrade_zone(game: &Game) -> Vec<Line<'static>> {
 
     let level_width = rows.iter().map(|row| row.level.len()).max().unwrap_or(0);
     let cost_width = rows.iter().map(|row| row.cost.len()).max().unwrap_or(0);
+    let name_width = rows.iter().map(|row| row.name.len()).max().unwrap_or(0);
 
     for row in rows {
         let text = if level_width > 0 {
             format!(
-                "[{}] {:level_w$} {:>cost_w$} {}",
-                row.key, row.level, row.cost, row.name,
+                "[{}] {:level_w$} {:>cost_w$} {:name_w$} --- {}",
+                row.key, row.level, row.cost, row.name, row.description,
                 level_w = level_width,
                 cost_w = cost_width,
+                name_w = name_width,
             )
         } else {
             format!(
-                "[{}] {:>cost_w$} {}",
-                row.key, row.cost, row.name,
+                "[{}] {:>cost_w$} {:name_w$} {}",
+                row.key, row.cost, row.name, row.description,
                 cost_w = cost_width,
+                name_w = name_width,
             )
         };
         let mut style = Style::default().fg(row.color);
