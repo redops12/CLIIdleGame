@@ -1,8 +1,8 @@
 use core::f64;
 use std::collections::HashMap;
 
-use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Color, Style};
+use ratatui::layout::{Alignment, Constraint, Layout, Rect};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Axis, Chart, Dataset, GraphType};
 use ratatui::symbols::Marker;
@@ -16,6 +16,8 @@ use crate::big_num::BigDollar;
 
 const GRAY_DIM: Color = Color::Rgb(80, 80, 80);
 const GRAY_MID: Color = Color::Rgb(140, 140, 140);
+const MONEY_BAR_HEIGHT: u16 = 3;
+const MONEY_GOLD: Color = Color::Rgb(255, 215, 0);
 
 pub fn compute_pane_layout(area: Rect, game: &Game) -> PaneRects {
     let mut column_constraints = vec![Constraint::Fill(2)];
@@ -160,17 +162,34 @@ fn auto_zone(game: &Game, height: u16) -> Vec<Line<'static>> {
     lines
 }
 
-fn upgrade_zone(game: &Game, width: u16) -> Vec<Line<'static>> {
+fn render_money_bar(frame: &mut Frame, area: Rect, game: &Game) {
+    let money_text = format!("Money: {}", game.game_state.money);
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            money_text,
+            Style::default()
+                .fg(MONEY_GOLD)
+                .add_modifier(Modifier::BOLD),
+        )))
+        .alignment(Alignment::Center)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(MONEY_GOLD)),
+        ),
+        area,
+    );
+}
+
+fn upgrade_zone(game: &Game) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
 
-    lines.push(Line::from(Span::raw(format!("Money: {}", game.game_state.money))));
     if game.game_state.streaks_unlocked || game.game_state.trust_level != 0 {
         lines.push(Line::from(Span::raw(format!("Trust: {}", game.game_state.trust_level))));
     }
     if game.game_state.seniority_level > 0 {
         lines.push(Line::from(Span::raw(format!("Seniority: {}", game.game_state.seniority_level))));
     }
-    lines.push(Line::from(Span::raw("=".repeat(width as usize))));
     for (i, kind) in game.get_displayed_upgrades().iter().enumerate() {
         let upgrade = get_upgrades().get(kind).unwrap();
         let level = game.game_state.upgrade_levels.get(kind).copied().unwrap_or(0);
@@ -276,11 +295,18 @@ fn typing_zone(game: &Game, width: u16) -> Vec<Line<'static>> {
 }
 
 pub fn ui(frame: &mut Frame, game: &Game) -> PaneRects {
-    let pane_rects = compute_pane_layout(frame.area(), game);
+    let [money_rect, main_area] = Layout::vertical([
+        Constraint::Length(MONEY_BAR_HEIGHT),
+        Constraint::Min(0),
+    ])
+    .areas(frame.area());
 
-    let upgrade_text_width = pane_rects.upgrade.width.saturating_sub(2);
+    render_money_bar(frame, money_rect, game);
+
+    let pane_rects = compute_pane_layout(main_area, game);
+
     frame.render_widget(
-        Paragraph::new(upgrade_zone(game, upgrade_text_width)).block(
+        Paragraph::new(upgrade_zone(game)).block(
             Block::default()
                 .borders(Borders::ALL)
                 .title("Upgrades")
