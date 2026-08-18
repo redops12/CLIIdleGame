@@ -163,7 +163,20 @@ fn auto_zone(game: &Game, height: u16) -> Vec<Line<'static>> {
 }
 
 fn render_money_bar(frame: &mut Frame, area: Rect, game: &Game) {
-    let money_text = format!("Money: {}", game.game_state.money);
+    let mut money_text = format!("Money: {}", game.game_state.money);
+    if game.game_state.trust_level != 0 || game.game_state.streaks_unlocked{
+        money_text.push_str(&format!(
+            " (Trust: {}%)",
+            game.game_state.trust_level
+        ));
+    }
+    if game.game_state.seniority_level > 0 {
+        let numerals: Vec<&str> = vec!["I", "II", "III", "IV", "V", "VI"];
+        money_text.push_str(&format!(
+            " Typer {}",
+            numerals[game.game_state.seniority_level as usize]
+        ));
+    }
     frame.render_widget(
         Paragraph::new(Line::from(Span::styled(
             money_text,
@@ -171,7 +184,6 @@ fn render_money_bar(frame: &mut Frame, area: Rect, game: &Game) {
                 .fg(MONEY_GOLD)
                 .add_modifier(Modifier::BOLD),
         )))
-        .alignment(Alignment::Center)
         .block(
             Block::default()
                 .borders(Borders::ALL)
@@ -193,13 +205,6 @@ struct UpgradeRow {
 
 fn upgrade_zone(game: &Game) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
-
-    if game.game_state.streaks_unlocked || game.game_state.trust_level != 0 {
-        lines.push(Line::from(Span::raw(format!("Trust: {}", game.game_state.trust_level))));
-    }
-    if game.game_state.seniority_level > 0 {
-        lines.push(Line::from(Span::raw(format!("Seniority: {}", game.game_state.seniority_level))));
-    }
 
     let mut rows = Vec::new();
     for (i, kind) in game.get_displayed_upgrades().iter().enumerate() {
@@ -316,11 +321,7 @@ fn typing_zone(game: &Game, width: u16) -> Vec<Line<'static>> {
     };
     let money_change = game.calc_money_change(&game.game_state.typed, reference);
     let pct_text = format!("{pct:>3}% {money_change:+}");
-    let text_width: usize = line.iter().map(Span::width).sum();
-    let pad = (width as usize).saturating_sub(text_width + pct_text.chars().count());
-    if pad > 0 {
-        line.push(Span::raw(" ".repeat(pad)));
-    }
+
     let pct_color = if pct >= 90 {
         Color::Green
     } else if pct >= 70 {
@@ -328,9 +329,9 @@ fn typing_zone(game: &Game, width: u16) -> Vec<Line<'static>> {
     } else {
         Color::Red
     };
-    line.push(Span::styled(pct_text, Style::default().fg(pct_color)));
 
     vec![
+        Line::from(Span::styled(pct_text, Style::default().fg(pct_color))),
         Line::from(line),
         Line::from(Span::styled(next1, Style::default().fg(GRAY_MID))),
         Line::from(Span::styled(next2, Style::default().fg(GRAY_DIM))),

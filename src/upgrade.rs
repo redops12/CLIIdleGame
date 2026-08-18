@@ -40,9 +40,9 @@ static UPGRADES: LazyLock<BTreeMap<UpgradeId, Upgrade>> = LazyLock::new(|| {
                     .collect(),
                 infinite: false,
                 name: "Writing Skill",
-                description: "Add 1 more cent per correct letter",
+                description: "Add a 10th more cent per correct letter",
                 upgrade_unlock_condition: |_game| true,
-                on_buy: |game| game.base_letter_value += BigDollar::from(1),
+                on_buy: |game| game.base_letter_value += BigDollar::from(0.001),
             },
         ),
         (
