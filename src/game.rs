@@ -9,6 +9,7 @@ use rand;
 use serde::{Deserialize, Serialize};
 
 use crate::big_num::BigDollar;
+use crate::game::TextSource::Intro;
 use crate::upgrade::{get_upgrades, UpgradeId};
 
 const WASTELAND: &str = include_str!("../assets/wasteland.txt");
@@ -50,15 +51,20 @@ fn idx_to_upper_letter(idx: usize) -> char {
     (b'A' + idx as u8) as char
 }
 
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TextSource {
+    Wasteland,
+    Intro,
+    IntroCapital,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
 pub struct GameState {
     // currently typed string
     pub typed: String,
 
     // Text variables
-    #[serde(skip, default = "GameState::default_current_text")]
-    pub current_text: Vec<&'static str>,
+    pub current_text: TextSource,
     pub current_line: usize,
 
     // auto info
@@ -97,18 +103,11 @@ pub struct GameState {
     pub letter_queue: [[char; LETTER_QUEUE_HEIGHT]; NUM_LETTERS],
 }
 
-impl GameState {
-    fn default_current_text() -> Vec<&'static str> {
-        // WASTELAND.split('\n').collect()
-        INTRO.split('\n').collect()
-    }
-}
-
 impl Default for GameState {
     fn default() -> Self {
         Self {
             typed: String::new(),
-            current_text: Self::default_current_text(),
+            current_text: Intro,
             current_line: 0,
             counts: HashMap::new(),
             money: BigDollar::from(0),
@@ -145,6 +144,7 @@ pub struct Game {
     pub last_update_time: std::time::Instant,
     pub last_profit_time: std::time::Instant,
     pub game_state: GameState,
+    pub text_sources: HashMap<TextSource, Vec<String>>,
 }
 
 impl Game {
@@ -160,6 +160,11 @@ impl Game {
             last_spawn_time: std::time::Instant::now(),
             last_update_time: std::time::Instant::now(),
             last_profit_time: std::time::Instant::now(),
+            text_sources: HashMap::from([
+                (TextSource::Wasteland, WASTELAND.lines().map(String::from).collect()),
+                (TextSource::Intro, INTRO.lines().map(str::to_lowercase).collect()),
+                (TextSource::IntroCapital, INTRO.lines().map(String::from).collect()),
+            ]),
             game_state,
         }
     }
@@ -194,17 +199,29 @@ impl Game {
         *self.game_state.counts.entry(key.to_string()).or_insert(0) += 1;
     }
 
+    pub fn get_text_line(&self, text_line: Option<usize>) -> &str {
+        let line_index = text_line.unwrap_or(self.game_state.current_line);
+        let default_empty: &str = "";
+        self.text_sources
+            .get(&self.game_state.current_text).unwrap()
+            .get(line_index).map_or(default_empty, |s| s.as_str())
+    }
+
     pub fn calc_money_change(&self, typed: &str, reference: &str) -> BigDollar {
         let mut money_change: BigDollar = BigDollar::from(0);
         let typed_chars: Vec<char> = typed.chars().collect();
-        let ref_chars: Vec<char> = reference.chars().collect();
+        let ref_chars: Vec<char> = if self.game_state.capital_letter_bonus_unlocked {
+            reference.chars().collect()
+        } else {
+            reference.to_lowercase().chars().collect()
+        };
         let len = typed_chars.len().max(ref_chars.len());
 
         for i in 0..len {
             match (typed_chars.get(i), ref_chars.get(i)) {
                 (Some(&c), Some(&t)) if c == t => {
                     let mult = if c.is_ascii_uppercase() && self.game_state.capital_letter_bonus_unlocked {
-                        5.0
+                        10.0
                     } else {
                         1.0
                     };
@@ -217,7 +234,7 @@ impl Game {
                         continue;
                     }
 
-                    money_change -= self.game_state.base_letter_value * 5.0 * TRUST_SCALE.powi(self.game_state.trust_level);
+                    money_change -= self.game_state.base_letter_value * 2.0 * TRUST_SCALE.powi(self.game_state.trust_level);
                 }
             }
         }
@@ -305,7 +322,7 @@ impl Game {
                 self.game_state.typed.push(c);
             }
             KeyCode::Enter => {
-                let current_line: &'static str = self.game_state.current_text[self.game_state.current_line];
+                let current_line: &str = self.get_text_line(None);
                 let typed_chars: Vec<char> = self.game_state.typed.chars().collect();
                 let ref_chars: Vec<char> = current_line.chars().collect();
                 let money_change = self.calc_money_change(&self.game_state.typed, current_line);
@@ -544,7 +561,6 @@ mod tests {
         assert_eq!(loaded.current_line, state.current_line);
         assert_eq!(loaded.upgrade_levels, state.upgrade_levels);
         assert_eq!(loaded.automation_unlocked, state.automation_unlocked);
-        assert_eq!(loaded.current_text.len(), GameState::default_current_text().len());
     }
 
     #[test]
@@ -560,6 +576,5 @@ mod tests {
         assert_eq!(loaded.base_letter_value, BigDollar::from(0.003));
         assert_eq!(loaded.trust_level, 0);
         assert_eq!(loaded.current_pane, WindowPanes::TextPane);
-        assert_eq!(loaded.current_text.len(), GameState::default_current_text().len());
     }
 }

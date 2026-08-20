@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use strum_macros::EnumIter;
 
 use crate::big_num::BigDollar;
-use crate::game::GameState;
+use crate::game::{GameState, TextSource};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumIter, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum UpgradeId {
@@ -77,9 +77,12 @@ static UPGRADES: LazyLock<BTreeMap<UpgradeId, Upgrade>> = LazyLock::new(|| {
                 costs: vec![BigDollar::from(5.0)],
                 infinite: false,
                 name: "Discover the shift key",
-                description: "Capital letters are worth 5x",
+                description: "Capital letters are worth 10x",
                 upgrade_unlock_condition: |game| game.high_water_money >= BigDollar::from(1.0),
-                on_buy: |game| game.capital_letter_bonus_unlocked = true,
+                on_buy: |game| {
+                    game.capital_letter_bonus_unlocked = true;
+                    game.current_text = TextSource::IntroCapital;
+                },
             },
         ),
         (

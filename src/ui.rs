@@ -1,7 +1,7 @@
 use core::f64;
 use std::collections::HashMap;
 
-use ratatui::layout::{Alignment, Constraint, Layout, Rect};
+use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Axis, Chart, Dataset, GraphType};
@@ -265,22 +265,10 @@ fn upgrade_zone(game: &Game) -> Vec<Line<'static>> {
     lines
 }
 
-fn typing_zone(game: &Game, width: u16) -> Vec<Line<'static>> {
-    let reference = game
-        .game_state.current_text
-        .get(game.game_state.current_line)
-        .copied()
-        .unwrap_or("");
-    let next1 = game
-        .game_state.current_text
-        .get(game.game_state.current_line + 1)
-        .copied()
-        .unwrap_or("");
-    let next2 = game
-        .game_state.current_text
-        .get(game.game_state.current_line + 2)
-        .copied()
-        .unwrap_or("");
+fn typing_zone<'a>(game: &'a Game) -> Vec<Line<'a>> {
+    let reference = game.get_text_line(None);
+    let next1 = game.get_text_line(Some(game.game_state.current_line + 1));
+    let next2 = game.get_text_line(Some(game.game_state.current_line + 2));
     let typed_chars: Vec<char> = game.game_state.typed.chars().collect();
     let ref_chars: Vec<char> = reference.chars().collect();
     let mut line = vec![];
@@ -366,9 +354,8 @@ pub fn ui(frame: &mut Frame, game: &Game) -> PaneRects {
     );
 
     // Inner width accounts for left/right borders.
-    let typing_text_width = pane_rects.upgrade.width.saturating_sub(2);
     frame.render_widget(
-        Paragraph::new(typing_zone(game, typing_text_width))
+        Paragraph::new(typing_zone(game))
             .block(Block::default()
                 .borders(Borders::ALL)
                 .title("Text").border_style(
