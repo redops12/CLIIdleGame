@@ -412,7 +412,7 @@ pub fn ui(frame: &mut Frame, game: &Game) -> PaneRects {
                 .data(&zero_line),
             Dataset::default()
                 .name("PPS")
-                .marker(Marker::Braille)
+                .marker(Marker::HalfBlock)
                 .graph_type(GraphType::Line)
                 .style(Color::Cyan)
                 .data(data),
