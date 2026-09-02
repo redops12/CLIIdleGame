@@ -159,11 +159,11 @@ fn auto_zone<'a>(game: &'a Game, height: u16) -> Vec<Line<'a>> {
     }
 
     let pad = (height as usize).saturating_sub(content.len());
+    let mut lines = vec![];
     for i in (0..pad).rev() {
         let next_line = game.get_text_line(Some(game.game_state.auto_current_text), Some(game.game_state.auto_current_line + 1 + i));
-        content.push(Line::from(Span::styled(next_line, Style::default().fg(Color::Cyan))));
+        lines.push(Line::from(Span::styled(next_line, Style::default().fg(Color::Cyan))));
     }
-    let mut lines = vec![Line::from(""); pad];
     lines.extend(content);
     lines
 }

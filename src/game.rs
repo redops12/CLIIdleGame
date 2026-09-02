@@ -539,6 +539,7 @@ impl Game {
         let old_auto_text = std::mem::take(&mut self.game_state.remaining_auto_text);
         for c in old_auto_text.chars() {
             if c.is_whitespace() {
+                remaining_auto_text.push(' ');
                 continue;
             }
 
@@ -546,6 +547,8 @@ impl Game {
                 remaining_auto_text.push(c);
             } else if !self.spawn_letter(c) {
                 remaining_auto_text.push(c);
+            } else {
+                remaining_auto_text.push(' ');
             }
         }
         self.game_state.remaining_auto_text = remaining_auto_text;
@@ -560,7 +563,7 @@ impl Game {
         self.clear_letters();
         self.advance_letters();
         self.sort_and_spawn();
-        if self.game_state.remaining_auto_text.is_empty() {
+        if self.game_state.remaining_auto_text.is_empty() || self.game_state.remaining_auto_text.chars().all(|c| c.is_whitespace()) {
             self.game_state.auto_current_line += 1;
             self.game_state.remaining_auto_text = String::from(self.get_text_line(Some(self.game_state.auto_current_text), Some(self.game_state.auto_current_line)));
         }
