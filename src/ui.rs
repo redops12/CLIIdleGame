@@ -112,9 +112,10 @@ fn auto_row(cells: impl IntoIterator<Item = (char, Color)>) -> Line<'static> {
     Line::from(spans)
 }
 
-fn auto_zone(game: &Game, height: u16) -> Vec<Line<'static>> {
+fn auto_zone<'a>(game: &'a Game, height: u16) -> Vec<Line<'a>> {
     let queue = &game.game_state.letter_queue;
     let counts = &game.game_state.counts;
+    let width = auto_row_width(NUM_LETTERS);
     let keys: Vec<char> = if game.game_state.letter_compression_unlocked {
         ('A'..='Z').collect()
     } else {
@@ -122,8 +123,9 @@ fn auto_zone(game: &Game, height: u16) -> Vec<Line<'static>> {
     };
     let mut content = Vec::new();
 
-    // Spawner sits one row above where letters are spawned (queue row 0).
-    content.push(auto_row((0..NUM_LETTERS).map(|_| ('█', Color::Cyan))));
+    content.push(Line::from(Span::styled("_".repeat(width), Style::default().fg(Color::Cyan))));
+    content.push(Line::from(Span::styled(&game.game_state.remaining_auto_text, Style::default().fg(Color::Cyan))));
+    content.push(Line::from(Span::styled("^|".repeat(NUM_LETTERS - 1) + "^", Style::default().fg(Color::Cyan))));
 
     for row in 0..LETTER_QUEUE_HEIGHT {
         let cells = (0..NUM_LETTERS).map(|idx| {
@@ -157,6 +159,10 @@ fn auto_zone(game: &Game, height: u16) -> Vec<Line<'static>> {
     }
 
     let pad = (height as usize).saturating_sub(content.len());
+    for i in (0..pad).rev() {
+        let next_line = game.get_text_line(Some(game.game_state.auto_current_text), Some(game.game_state.auto_current_line + 1 + i));
+        content.push(Line::from(Span::styled(next_line, Style::default().fg(Color::Cyan))));
+    }
     let mut lines = vec![Line::from(""); pad];
     lines.extend(content);
     lines
@@ -266,9 +272,9 @@ fn upgrade_zone(game: &Game) -> Vec<Line<'static>> {
 }
 
 fn typing_zone<'a>(game: &'a Game) -> Vec<Line<'a>> {
-    let reference = game.get_text_line(None);
-    let next1 = game.get_text_line(Some(game.game_state.current_line + 1));
-    let next2 = game.get_text_line(Some(game.game_state.current_line + 2));
+    let reference = game.get_text_line(None, None);
+    let next1 = game.get_text_line(None, Some(game.game_state.current_line + 1));
+    let next2 = game.get_text_line(None, Some(game.game_state.current_line + 2));
     let typed_chars: Vec<char> = game.game_state.typed.chars().collect();
     let ref_chars: Vec<char> = reference.chars().collect();
     let mut line = vec![];

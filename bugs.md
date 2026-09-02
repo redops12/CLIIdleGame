@@ -2,3 +2,5 @@
 - When a text runs out the next text is not automatically selected
 - The graph looks massively negative when upgrades are purchased
 - The graph is jittery compared to the speed of the auto typer -> 5mins?
+- change background when highlighted
+- make new upgrades flash for a few seconds when unlocked

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io;
 use std::path::Path;
 
@@ -9,11 +9,11 @@ use rand;
 use serde::{Deserialize, Serialize};
 
 use crate::big_num::BigDollar;
-use crate::game::TextSource::Intro;
 use crate::upgrade::{get_upgrades, UpgradeId};
 
 const WASTELAND: &str = include_str!("../assets/wasteland.txt");
 const INTRO: &str = include_str!("../assets/intro.txt");
+const BARTLEBY: &str = include_str!("../assets/bartleby.txt");
 pub const NUM_LETTERS: usize = 26;
 pub const LETTER_QUEUE_HEIGHT: usize = 10;
 pub const MAX_TRUST_LEVEL: i32 = 100;
@@ -56,16 +56,18 @@ pub enum TextSource {
     Wasteland,
     Intro,
     IntroCapital,
+    Bartleby,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GameState {
-    // currently typed string
-    pub typed: String,
-
     // Text variables
     pub current_text: TextSource,
     pub current_line: usize,
+    pub typed: String,
+    pub auto_current_text: TextSource,
+    pub auto_current_line: usize,
+    pub remaining_auto_text: String,
 
     // auto info
     pub counts: HashMap<String, u32>,
@@ -107,8 +109,11 @@ impl Default for GameState {
     fn default() -> Self {
         Self {
             typed: String::new(),
-            current_text: Intro,
+            current_text: TextSource::Intro,
             current_line: 0,
+            auto_current_text: TextSource::Bartleby,
+            auto_current_line: 0,
+            remaining_auto_text: String::new(),
             counts: HashMap::new(),
             money: BigDollar::from(0),
             high_water_money: BigDollar::from(0),
@@ -164,6 +169,7 @@ impl Game {
                 (TextSource::Wasteland, WASTELAND.lines().map(String::from).collect()),
                 (TextSource::Intro, INTRO.lines().map(str::to_lowercase).collect()),
                 (TextSource::IntroCapital, INTRO.lines().map(String::from).collect()),
+                (TextSource::Bartleby, BARTLEBY.lines().map(String::from).collect()),
             ]),
             game_state,
         }
@@ -199,11 +205,12 @@ impl Game {
         *self.game_state.counts.entry(key.to_string()).or_insert(0) += 1;
     }
 
-    pub fn get_text_line(&self, text_line: Option<usize>) -> &str {
+    pub fn get_text_line(&self, text_source: Option<TextSource>, text_line: Option<usize>) -> &str {
+        let source = text_source.unwrap_or(self.game_state.current_text);
         let line_index = text_line.unwrap_or(self.game_state.current_line);
         let default_empty: &str = "";
         self.text_sources
-            .get(&self.game_state.current_text).unwrap()
+            .get(&source).unwrap()
             .get(line_index).map_or(default_empty, |s| s.as_str())
     }
 
@@ -322,7 +329,7 @@ impl Game {
                 self.game_state.typed.push(c);
             }
             KeyCode::Enter => {
-                let current_line: &str = self.get_text_line(None);
+                let current_line: &str = self.get_text_line(None, None);
                 let typed_chars: Vec<char> = self.game_state.typed.chars().collect();
                 let ref_chars: Vec<char> = current_line.chars().collect();
                 let money_change = self.calc_money_change(&self.game_state.typed, current_line);
@@ -445,36 +452,35 @@ impl Game {
         }
     }
 
-    fn letter_queue_update(&mut self, now: std::time::Instant) {
-        // compress letters in the queue if letter_compression_unlocked is true
-        if self.game_state.letter_compression_unlocked {
-            for x in 0..NUM_LETTERS {
-                let mut start_y = LETTER_QUEUE_HEIGHT;
-                for y in (4..LETTER_QUEUE_HEIGHT).rev() {
-                    if self.game_state.letter_queue[x][y] == idx_to_letter(x) {
-                        start_y = y;
-                        break;
-                    }
+    fn compress_letters(&mut self) {
+        for x in 0..NUM_LETTERS {
+            let mut start_y = LETTER_QUEUE_HEIGHT;
+            for y in (4..LETTER_QUEUE_HEIGHT).rev() {
+                if self.game_state.letter_queue[x][y] == idx_to_letter(x) {
+                    start_y = y;
+                    break;
                 }
-                if start_y == LETTER_QUEUE_HEIGHT {
-                    continue;
+            }
+            if start_y == LETTER_QUEUE_HEIGHT {
+                continue;
+            }
+            let mut compression_possible = true;
+            for y in start_y - 4..=start_y {
+                if self.game_state.letter_queue[x][y] == ' ' {
+                    compression_possible = false;
+                    break;
                 }
-                let mut compression_possible = true;
-                for y in start_y - 4..=start_y {
-                    if self.game_state.letter_queue[x][y] == ' ' {
-                        compression_possible = false;
-                        break;
-                    }
-                }
-                if compression_possible {
-                    self.game_state.letter_queue[x][start_y] = self.game_state.letter_queue[x][start_y - 1].to_ascii_uppercase();
-                    for y in start_y - 4..start_y {
-                        self.game_state.letter_queue[x][y] = ' ';
-                    }
+            }
+            if compression_possible {
+                self.game_state.letter_queue[x][start_y] = self.game_state.letter_queue[x][start_y - 1].to_ascii_uppercase();
+                for y in start_y - 4..start_y {
+                    self.game_state.letter_queue[x][y] = ' ';
                 }
             }
         }
+    }
 
+    fn clear_letters(&mut self) {
         // clear out letters that have reached the bottom and have counts
         let mut chars_processed = String::new();
         for x in 0..NUM_LETTERS {
@@ -494,7 +500,9 @@ impl Game {
         }
         let money_change = self.calc_money_change(&chars_processed, &chars_processed);
         self.increment_money(money_change);
+    }
 
+    fn advance_letters(&mut self) {
         // move all letters down one row
         for y in (1..LETTER_QUEUE_HEIGHT).rev() {
             for x in 0..NUM_LETTERS {
@@ -504,19 +512,57 @@ impl Game {
                 }
             }
         }
+    }
 
-        if now - self.last_spawn_time >= std::time::Duration::from_millis(50) {
-            // spawn a new letter at the top
-            let x = rand::random::<u32>() % NUM_LETTERS as u32;
-            let idx = x as usize;
+    fn spawn_letter(&mut self, c: char) -> bool {
+        if !c.is_ascii_alphabetic() {
+            return false;
+        }
 
-            if self.game_state.letter_queue[idx][0] != ' ' {
-                // if the top row is already occupied, don't spawn a new letter
-                return;
+        let idx = c.to_ascii_lowercase() as usize - 'a' as usize;
+        if idx >= NUM_LETTERS {
+            return false;
+        }
+
+        if self.game_state.letter_queue[idx][0] != ' ' {
+            return false
+        }
+
+        self.game_state.letter_queue[idx][0] = (b'a' + idx as u8) as char;
+
+        true
+    }
+
+    fn sort_and_spawn(&mut self) {
+        let mut chars_to_spawn = HashSet::new();
+        let mut remaining_auto_text = String::new();
+        let old_auto_text = std::mem::take(&mut self.game_state.remaining_auto_text);
+        for c in old_auto_text.chars() {
+            if c.is_whitespace() {
+                continue;
             }
 
-            self.game_state.letter_queue[idx][0] = (b'a' + idx as u8) as char;
-            self.last_spawn_time = now;
+            if !chars_to_spawn.insert(c) {
+                remaining_auto_text.push(c);
+            } else if !self.spawn_letter(c) {
+                remaining_auto_text.push(c);
+            }
+        }
+        self.game_state.remaining_auto_text = remaining_auto_text;
+    }
+
+    fn letter_queue_update(&mut self, now: std::time::Instant) {
+        // compress letters in the queue if letter_compression_unlocked is true
+        if self.game_state.letter_compression_unlocked {
+            self.compress_letters();
+        }
+
+        self.clear_letters();
+        self.advance_letters();
+        self.sort_and_spawn();
+        if self.game_state.remaining_auto_text.is_empty() {
+            self.game_state.auto_current_line += 1;
+            self.game_state.remaining_auto_text = String::from(self.get_text_line(Some(self.game_state.auto_current_text), Some(self.game_state.auto_current_line)));
         }
     }
 
