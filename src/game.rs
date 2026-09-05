@@ -5,7 +5,6 @@ use std::path::Path;
 use crossbeam_channel::Receiver;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
-use rand;
 use serde::{Deserialize, Serialize};
 
 use crate::big_num::BigDollar;
@@ -154,7 +153,6 @@ pub struct Game {
     pub should_quit: bool,
     pub pane_rects: PaneRects,
 
-    pub last_spawn_time: std::time::Instant,
     pub last_update_time: std::time::Instant,
     pub last_profit_time: std::time::Instant,
     pub game_state: GameState,
@@ -171,7 +169,6 @@ impl Game {
             input_rx,
             should_quit: false,
             pane_rects: PaneRects::default(),
-            last_spawn_time: std::time::Instant::now(),
             last_update_time: std::time::Instant::now(),
             last_profit_time: std::time::Instant::now(),
             text_sources: HashMap::from([
@@ -701,7 +698,7 @@ impl Game {
             .unwrap_or(self.game_state.auto_current_line)
     }
 
-    fn letter_queue_update(&mut self, now: std::time::Instant) {
+    fn letter_queue_update(&mut self) {
         // compress letters in the queue if letter_compression_unlocked is true
         if self.game_state.letter_compression_unlocked {
             self.compress_letters();
@@ -732,10 +729,10 @@ impl Game {
         self.update_handle_inputs();
         self.handle_tracking(now);
 
-        if now - self.last_update_time >= std::time::Duration::from_millis(200) {
+        if now - self.last_update_time >= std::time::Duration::from_millis(400) {
             self.last_update_time = now;
             if self.game_state.automation_unlocked {
-                self.letter_queue_update(now);
+                self.letter_queue_update();
             }
         }
     }
