@@ -251,9 +251,9 @@ fn upgrade_zone(game: &Game) -> Vec<Line<'static>> {
 }
 
 fn typing_zone<'a>(game: &'a Game) -> Vec<Line<'a>> {
-    let reference = game.get_text_line(None, None);
-    let next1 = game.get_text_line(None, Some(game.game_state.current_line + 1));
-    let next2 = game.get_text_line(None, Some(game.game_state.current_line + 2));
+    let reference = game.get_text_line(None);
+    let next1 = game.get_text_line(Some(game.game_state.current_line + 1));
+    let next2 = game.get_text_line(Some(game.game_state.current_line + 2));
     let typed_chars: Vec<char> = game.game_state.typed.chars().collect();
     let ref_chars: Vec<char> = reference.chars().collect();
     let mut line = vec![];
@@ -367,17 +367,10 @@ pub fn ui(frame: &mut Frame, game: &Game) -> PaneRects {
         if let Some(auto_rect) = pane_rects.auto_keys {
             if auto_rect.width > 0 && auto_rect.height > 0 {
                 let is_focused = game.game_state.current_pane == WindowPanes::AutoPane;
-                let empty = Vec::new();
-                let lines = game
-                    .text_sources
-                    .get(&game.game_state.auto_queue.auto_current_text)
-                    .unwrap_or(&empty);
                 game.game_state.auto_queue.ui(
                     frame,
                     auto_rect,
-                    is_focused,
-                    game.game_state.letter_compression_unlocked,
-                    lines,
+                    is_focused
                 );
             }
         }
@@ -408,12 +401,12 @@ pub fn ui(frame: &mut Frame, game: &Game) -> PaneRects {
                 let chart = Chart::new(vec![
                     Dataset::default()
                         .graph_type(GraphType::Line)
-                        .marker(Marker::Dot)
+                        .marker(Marker::Braille)
                         .style(Style::default().fg(GRAY_MID))
                         .data(&zero_line),
                     Dataset::default()
                         .name("PPS")
-                        .marker(Marker::HalfBlock)
+                        .marker(Marker::Braille)
                         .graph_type(GraphType::Line)
                         .style(Color::Cyan)
                         .data(data),

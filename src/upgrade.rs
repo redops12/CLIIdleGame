@@ -5,7 +5,8 @@ use serde::{Deserialize, Serialize};
 use strum_macros::EnumIter;
 
 use crate::big_num::BigDollar;
-use crate::game::{GameState, TextSource};
+use crate::game::GameState;
+use crate::text_sources::TextSource;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumIter, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum UpgradeId {
@@ -125,8 +126,8 @@ static UPGRADES: LazyLock<BTreeMap<UpgradeId, Upgrade>> = LazyLock::new(|| {
                 infinite: false,
                 name: "Letter compression",
                 description: "Lowercase letters are compressed to uppercase letters",
-                upgrade_unlock_condition: |game| game.total_money_earned >= BigDollar::from(10.0),
-                on_buy: |game| game.letter_compression_unlocked = true,
+                upgrade_unlock_condition: |game| game.total_money_earned >= BigDollar::from(50.0) && game.capital_letter_bonus_unlocked,
+                on_buy: |game| game.auto_queue.letter_compression_unlocked = true,
             },
         ),
         (

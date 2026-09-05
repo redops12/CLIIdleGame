@@ -7,14 +7,11 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent,
 
 use serde::{Deserialize, Serialize};
 
-use crate::auto_queue::{AutoQueue, AUTO_TEXT_LINES};
+use crate::auto_queue::{AutoQueue};
 use crate::big_num::BigDollar;
 use crate::test_mode::{AppModule, TestMode};
 use crate::upgrade::{get_upgrades, UpgradeId};
-
-const WASTELAND: &str = include_str!("../assets/wasteland.txt");
-const INTRO: &str = include_str!("../assets/intro.txt");
-const BARTLEBY: &str = include_str!("../assets/bartleby.txt");
+use crate::text_sources::{TextSource, get_lines_from_source};
 
 pub const MAX_TRUST_LEVEL: i32 = 100;
 pub const TRUST_SCALE: f64 = 1.15;
@@ -42,15 +39,6 @@ pub struct PaneRects {
     pub auto_keys: Option<ratatui::layout::Rect>,
     pub graph: Option<ratatui::layout::Rect>,
 }
-
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, Serialize, Deserialize)]
-pub enum TextSource {
-    Wasteland,
-    Intro,
-    IntroCapital,
-    Bartleby,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct GameState {
@@ -80,7 +68,6 @@ pub struct GameState {
     pub automation_unlocked: bool,
     pub seniority_level: u8,
     pub graphs_unlocked: bool,
-    pub letter_compression_unlocked: bool,
     pub disable_penalty: bool,
 
     // top left is 0, 0
@@ -112,7 +99,6 @@ impl Default for GameState {
             automation_unlocked: false,
             seniority_level: 0,
             graphs_unlocked: false,
-            letter_compression_unlocked: false,
             disable_penalty: false,
             window_x: 1,
             window_y: 0,
@@ -131,7 +117,6 @@ pub struct Game {
     pub last_update_time: std::time::Instant,
     pub last_profit_time: std::time::Instant,
     pub game_state: GameState,
-    pub text_sources: HashMap<TextSource, Vec<String>>,
     pub test_mode: Option<TestMode>,
 }
 
@@ -161,16 +146,9 @@ impl Game {
             pane_rects: PaneRects::default(),
             last_update_time: std::time::Instant::now(),
             last_profit_time: std::time::Instant::now(),
-            text_sources: HashMap::from([
-                (TextSource::Wasteland, WASTELAND.lines().map(String::from).collect()),
-                (TextSource::Intro, INTRO.lines().map(str::to_lowercase).collect()),
-                (TextSource::IntroCapital, INTRO.lines().map(String::from).collect()),
-                (TextSource::Bartleby, BARTLEBY.lines().map(String::from).collect()),
-            ]),
             game_state,
             test_mode,
         };
-        game.refill_auto_lines();
         game.recalculate_current_pane();
         game
     }
@@ -194,23 +172,8 @@ impl Game {
 
     pub fn load_state(path: &Path) -> io::Result<GameState> {
         let data = std::fs::read_to_string(path)?;
-        let mut value: serde_json::Value =
+        let value: serde_json::Value =
             serde_json::from_str(&data).map_err(io::Error::other)?;
-        if let Some(obj) = value.as_object_mut() {
-            if obj.contains_key("remaining_auto_text") && !obj.contains_key("remaining_auto_lines")
-            {
-                let old = obj.remove("remaining_auto_text").unwrap();
-                let mut lines: [String; AUTO_TEXT_LINES] =
-                    std::array::from_fn(|_| String::new());
-                if let Some(text) = old.as_str() {
-                    lines[0] = text.to_string();
-                }
-                obj.insert(
-                    "remaining_auto_lines".into(),
-                    serde_json::to_value(lines).map_err(io::Error::other)?,
-                );
-            }
-        }
         serde_json::from_value(value).map_err(io::Error::other)
     }
 
@@ -231,28 +194,11 @@ impl Game {
         self.game_state.second_profit_buckets[self.game_state.second_profit_bucket_head] -= amount;
     }
 
-    #[allow(dead_code)]
-    pub fn increment(&mut self, key: &str) {
-        self.game_state.auto_queue.increment(key);
-    }
-
-    #[allow(dead_code)]
-    pub fn auto_queue(&self) -> &AutoQueue {
-        &self.game_state.auto_queue
-    }
-
-    #[allow(dead_code)]
-    pub fn auto_queue_mut(&mut self) -> &mut AutoQueue {
-        &mut self.game_state.auto_queue
-    }
-
-    pub fn get_text_line(&self, text_source: Option<TextSource>, text_line: Option<usize>) -> &str {
-        let source = text_source.unwrap_or(self.game_state.current_text);
-        let line_index = text_line.unwrap_or(self.game_state.current_line);
-        let default_empty: &str = "";
-        self.text_sources
-            .get(&source).unwrap()
-            .get(line_index).map_or(default_empty, |s| s.as_str())
+    pub fn get_text_line(&self, offset: Option<usize>) -> &str {
+        get_lines_from_source(
+            self.game_state.current_text,
+            self.game_state.current_line + offset.unwrap_or(0),
+        )
     }
 
     pub fn calc_money_change(&self, typed: &str, reference: &str) -> BigDollar {
@@ -401,7 +347,7 @@ impl Game {
                 self.game_state.typed.push(c);
             }
             KeyCode::Enter => {
-                let current_line: &str = self.get_text_line(None, None);
+                let current_line: &str = self.get_text_line(None);
                 let typed_chars: Vec<char> = self.game_state.typed.chars().collect();
                 let ref_chars: Vec<char> = current_line.chars().collect();
                 let money_change = self.calc_money_change(&self.game_state.typed, current_line);
@@ -520,30 +466,8 @@ impl Game {
         }
     }
 
-    pub fn refill_auto_lines(&mut self) {
-        let empty = Vec::new();
-        let lines = self
-            .text_sources
-            .get(&self.game_state.auto_queue.auto_current_text)
-            .unwrap_or(&empty);
-        self.game_state.auto_queue.refill_auto_lines(lines);
-    }
-
-    #[allow(dead_code)]
-    pub fn auto_preview_start(&self) -> usize {
-        self.game_state.auto_queue.auto_preview_start()
-    }
-
     fn letter_queue_update(&mut self) {
-        let empty = Vec::new();
-        let lines = self
-            .text_sources
-            .get(&self.game_state.auto_queue.auto_current_text)
-            .unwrap_or(&empty);
-        let chars_processed = self
-            .game_state
-            .auto_queue
-            .update(self.game_state.letter_compression_unlocked, lines);
+        let chars_processed = self.game_state.auto_queue.update();
         let money_change = self.calc_money_change(&chars_processed, &chars_processed);
         self.increment_money(money_change);
     }
@@ -560,11 +484,8 @@ impl Game {
         self.update_handle_inputs();
         self.handle_tracking(now);
 
-        if now - self.last_update_time >= std::time::Duration::from_millis(400) {
-            self.last_update_time = now;
-            if self.is_module_active(AppModule::AutoQueue) {
-                self.letter_queue_update();
-            }
+        if self.is_module_active(AppModule::AutoQueue) {
+            self.letter_queue_update();
         }
     }
 }
@@ -600,7 +521,7 @@ mod tests {
         assert_eq!(loaded.current_line, 3);
         assert_eq!(loaded.automation_unlocked, false);
         assert_eq!(loaded.capital_letter_bonus_unlocked, false);
-        assert_eq!(loaded.letter_compression_unlocked, false);
+        assert_eq!(loaded.auto_queue.letter_compression_unlocked, false);
         assert_eq!(loaded.base_letter_value, BigDollar::from(0.003));
         assert_eq!(loaded.trust_level, 0);
         assert_eq!(loaded.current_pane, WindowPanes::TextPane);

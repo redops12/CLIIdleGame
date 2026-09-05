@@ -6,6 +6,7 @@ mod big_num;
 mod game;
 mod save;
 mod test_mode;
+mod text_sources;
 mod ui;
 mod upgrade;
 
