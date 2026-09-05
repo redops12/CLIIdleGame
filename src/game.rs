@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::io;
 use std::path::Path;
 
@@ -7,20 +7,14 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent,
 
 use serde::{Deserialize, Serialize};
 
+use crate::auto_queue::{AutoQueue, AUTO_TEXT_LINES};
 use crate::big_num::BigDollar;
 use crate::upgrade::{get_upgrades, UpgradeId};
 
 const WASTELAND: &str = include_str!("../assets/wasteland.txt");
 const INTRO: &str = include_str!("../assets/intro.txt");
 const BARTLEBY: &str = include_str!("../assets/bartleby.txt");
-pub const NUM_LETTERS: usize = 26;
-pub const LETTER_QUEUE_HEIGHT: usize = 10;
-pub const AUTO_TEXT_LINES: usize = 5;
-const UNSET_AUTO_LINE_SOURCE: usize = usize::MAX;
 
-fn default_auto_line_sources() -> [usize; AUTO_TEXT_LINES] {
-    [UNSET_AUTO_LINE_SOURCE; AUTO_TEXT_LINES]
-}
 pub const MAX_TRUST_LEVEL: i32 = 100;
 pub const TRUST_SCALE: f64 = 1.15;
 pub const SECOND_POLL_WINDOW: usize = 30;
@@ -48,14 +42,6 @@ pub struct PaneRects {
     pub graph: Option<ratatui::layout::Rect>,
 }
 
-fn idx_to_letter(idx: usize) -> char {
-    (b'a' + idx as u8) as char
-}
-
-fn idx_to_upper_letter(idx: usize) -> char {
-    (b'A' + idx as u8) as char
-}
-
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TextSource {
     Wasteland,
@@ -65,19 +51,15 @@ pub enum TextSource {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct GameState {
     // Text variables
     pub current_text: TextSource,
     pub current_line: usize,
     pub typed: String,
-    pub auto_current_text: TextSource,
-    pub auto_current_line: usize,
-    pub remaining_auto_lines: [String; AUTO_TEXT_LINES],
-    #[serde(default = "default_auto_line_sources")]
-    pub auto_line_sources: [usize; AUTO_TEXT_LINES],
 
-    // auto info
-    pub counts: HashMap<String, u32>,
+    #[serde(flatten)]
+    pub auto_queue: AutoQueue,
 
     // displayed stats
     pub money: BigDollar,
@@ -107,9 +89,6 @@ pub struct GameState {
     pub current_pane: WindowPanes,
     previous_window_x: u16,
     previous_window_y: u16,
-
-
-    pub letter_queue: [[char; LETTER_QUEUE_HEIGHT]; NUM_LETTERS],
 }
 
 impl Default for GameState {
@@ -118,11 +97,7 @@ impl Default for GameState {
             typed: String::new(),
             current_text: TextSource::Intro,
             current_line: 0,
-            auto_current_text: TextSource::Bartleby,
-            auto_current_line: 0,
-            remaining_auto_lines: std::array::from_fn(|_| String::new()),
-            auto_line_sources: default_auto_line_sources(),
-            counts: HashMap::new(),
+            auto_queue: AutoQueue::default(),
             money: BigDollar::from(0),
             high_water_money: BigDollar::from(0),
             total_money_earned: BigDollar::from(0),
@@ -143,7 +118,6 @@ impl Default for GameState {
             current_pane: WindowPanes::TextPane,
             previous_window_x: 1,
             previous_window_y: 0,
-            letter_queue: [[' '; LETTER_QUEUE_HEIGHT]; NUM_LETTERS],
         }
     }
 }
@@ -226,8 +200,19 @@ impl Game {
         self.game_state.second_profit_buckets[self.game_state.second_profit_bucket_head] -= amount;
     }
 
+    #[allow(dead_code)]
     pub fn increment(&mut self, key: &str) {
-        *self.game_state.counts.entry(key.to_string()).or_insert(0) += 1;
+        self.game_state.auto_queue.increment(key);
+    }
+
+    #[allow(dead_code)]
+    pub fn auto_queue(&self) -> &AutoQueue {
+        &self.game_state.auto_queue
+    }
+
+    #[allow(dead_code)]
+    pub fn auto_queue_mut(&mut self) -> &mut AutoQueue {
+        &mut self.game_state.auto_queue
     }
 
     pub fn get_text_line(&self, text_source: Option<TextSource>, text_line: Option<usize>) -> &str {
@@ -465,11 +450,7 @@ impl Game {
                     match self.game_state.current_pane {
                         WindowPanes::TextPane => self.text_pane_input(key.code),
                         WindowPanes::UpgradePane => self.upgrade_pane_input(key.code),
-                        WindowPanes::AutoPane => {
-                            if let KeyCode::Char(c) = key.code {
-                                self.increment(&c.to_string());
-                            }
-                        }
+                        WindowPanes::AutoPane => self.game_state.auto_queue.handle_input(key.code),
                         _ => {}
                     }
                 }
@@ -477,244 +458,32 @@ impl Game {
         }
     }
 
-    fn compress_letters(&mut self) {
-        for x in 0..NUM_LETTERS {
-            let mut start_y = LETTER_QUEUE_HEIGHT;
-            for y in (4..LETTER_QUEUE_HEIGHT).rev() {
-                if self.game_state.letter_queue[x][y] == idx_to_letter(x) {
-                    start_y = y;
-                    break;
-                }
-            }
-            if start_y == LETTER_QUEUE_HEIGHT {
-                continue;
-            }
-            let mut compression_possible = true;
-            for y in start_y - 4..=start_y {
-                if self.game_state.letter_queue[x][y] == ' ' {
-                    compression_possible = false;
-                    break;
-                }
-            }
-            if compression_possible {
-                self.game_state.letter_queue[x][start_y] = self.game_state.letter_queue[x][start_y - 1].to_ascii_uppercase();
-                for y in start_y - 4..start_y {
-                    self.game_state.letter_queue[x][y] = ' ';
-                }
-            }
-        }
+    pub fn refill_auto_lines(&mut self) {
+        let empty = Vec::new();
+        let lines = self
+            .text_sources
+            .get(&self.game_state.auto_queue.auto_current_text)
+            .unwrap_or(&empty);
+        self.game_state.auto_queue.refill_auto_lines(lines);
     }
 
-    fn clear_letters(&mut self) {
-        // clear out letters that have reached the bottom and have counts
-        let mut chars_processed = String::new();
-        for x in 0..NUM_LETTERS {
-            let letter = if self.game_state.letter_compression_unlocked {
-                idx_to_upper_letter(x)
-            } else {
-                idx_to_letter(x)
-            };
-            if self.game_state.letter_queue[x][LETTER_QUEUE_HEIGHT - 1] == letter {
-                let count = self.game_state.counts.entry(letter.to_string()).or_insert(0);
-                if *count > 0 {
-                    *count -= 1;
-                    chars_processed.push(letter);
-                    self.game_state.letter_queue[x][LETTER_QUEUE_HEIGHT - 1] = ' ';
-                }
-            }
-        }
-        let money_change = self.calc_money_change(&chars_processed, &chars_processed);
-        self.increment_money(money_change);
-    }
-
-    fn advance_letters(&mut self) {
-        // move all letters down one row
-        for y in (1..LETTER_QUEUE_HEIGHT).rev() {
-            for x in 0..NUM_LETTERS {
-                if self.game_state.letter_queue[x][y] == ' ' {
-                    self.game_state.letter_queue[x][y] = self.game_state.letter_queue[x][y - 1];
-                    self.game_state.letter_queue[x][y - 1] = ' ';
-                }
-            }
-        }
-    }
-
-    fn spawn_letter(&mut self, c: char) -> bool {
-        if !c.is_ascii_alphabetic() {
-            return false;
-        }
-
-        let idx = c.to_ascii_lowercase() as usize - 'a' as usize;
-        if idx >= NUM_LETTERS {
-            return false;
-        }
-
-        if self.game_state.letter_queue[idx][0] != ' ' {
-            return false
-        }
-
-        self.game_state.letter_queue[idx][0] = (b'a' + idx as u8) as char;
-
-        true
-    }
-
-    fn sort_and_spawn(&mut self) {
-        let mut chars_to_spawn = HashSet::new();
-        for i in (0..AUTO_TEXT_LINES).rev() {
-            let old_auto_text = std::mem::take(&mut self.game_state.remaining_auto_lines[i]);
-            let mut remaining_auto_text = String::new();
-            for c in old_auto_text.chars() {
-                if c.is_whitespace() {
-                    remaining_auto_text.push(' ');
-                    continue;
-                }
-
-                if !chars_to_spawn.insert(c) {
-                    remaining_auto_text.push(c);
-                } else if !self.spawn_letter(c) {
-                    remaining_auto_text.push(c);
-                } else {
-                    remaining_auto_text.push(' ');
-                }
-            }
-            self.game_state.remaining_auto_lines[i] = remaining_auto_text;
-        }
-    }
-
-    fn auto_source_line_count(&self) -> usize {
-        self.text_sources
-            .get(&self.game_state.auto_current_text)
-            .map(|lines| lines.len())
-            .unwrap_or(0)
-    }
-
-    fn line_at_source_index(&self, source_idx: usize) -> String {
-        String::from(self.get_text_line(
-            Some(self.game_state.auto_current_text),
-            Some(source_idx),
-        ))
-    }
-
-    fn auto_line_complete(line: &str) -> bool {
-        !line.is_empty() && line.chars().all(|c| c.is_whitespace())
-    }
-
-    fn collect_auto_line_state(&self) -> (HashMap<usize, String>, HashSet<usize>) {
-        let mut saved = HashMap::new();
-        let mut completed = HashSet::new();
-        let base = self.game_state.auto_current_line;
-
-        for i in 0..AUTO_TEXT_LINES {
-            let src = if self.game_state.auto_line_sources[i] == UNSET_AUTO_LINE_SOURCE {
-                base + i
-            } else {
-                self.game_state.auto_line_sources[i]
-            };
-            let line = &self.game_state.remaining_auto_lines[i];
-            if Self::auto_line_complete(line) {
-                completed.insert(src);
-            } else if !line.is_empty() {
-                saved.insert(src, line.clone());
-            }
-        }
-
-        (saved, completed)
-    }
-
-    fn ensure_auto_line_sources_initialized(&mut self) {
-        let base = self.game_state.auto_current_line;
-        for i in 0..AUTO_TEXT_LINES {
-            if self.game_state.auto_line_sources[i] == UNSET_AUTO_LINE_SOURCE {
-                self.game_state.auto_line_sources[i] = base + i;
-            }
-        }
-    }
-
-    fn next_unused_source(
-        &self,
-        start: usize,
-        completed: &HashSet<usize>,
-        reserved: &HashSet<usize>,
-    ) -> Option<usize> {
-        let source_len = self.auto_source_line_count();
-        let mut src = start;
-        while src < source_len {
-            if !completed.contains(&src) && !reserved.contains(&src) {
-                return Some(src);
-            }
-            src += 1;
-        }
-        None
-    }
-
-    fn refill_auto_lines(&mut self) {
-        self.ensure_auto_line_sources_initialized();
-        let (saved, completed) = self.collect_auto_line_state();
-        let mut reserved = HashSet::new();
-        let mut search = self.game_state.auto_current_line;
-
-        for slot in 0..AUTO_TEXT_LINES {
-            let preferred = self.game_state.auto_line_sources[slot];
-            let src = if preferred != UNSET_AUTO_LINE_SOURCE
-                && saved.contains_key(&preferred)
-                && !reserved.contains(&preferred)
-            {
-                preferred
-            } else if let Some(found) = self.next_unused_source(search, &completed, &reserved) {
-                search = found + 1;
-                found
-            } else {
-                self.game_state.remaining_auto_lines[slot] = String::new();
-                self.game_state.auto_line_sources[slot] = UNSET_AUTO_LINE_SOURCE;
-                continue;
-            };
-
-            reserved.insert(src);
-            self.game_state.auto_line_sources[slot] = src;
-            self.game_state.remaining_auto_lines[slot] = saved
-                .get(&src)
-                .cloned()
-                .unwrap_or_else(|| self.line_at_source_index(src));
-        }
-
-        if let Some(min_src) = self
-            .game_state
-            .auto_line_sources
-            .iter()
-            .filter(|&&s| s != UNSET_AUTO_LINE_SOURCE)
-            .min()
-        {
-            self.game_state.auto_current_line = *min_src;
-        }
-    }
-
+    #[allow(dead_code)]
     pub fn auto_preview_start(&self) -> usize {
-        self.game_state
-            .auto_line_sources
-            .iter()
-            .filter(|&&s| s != UNSET_AUTO_LINE_SOURCE)
-            .max()
-            .map(|max| max + 1)
-            .unwrap_or(self.game_state.auto_current_line)
+        self.game_state.auto_queue.auto_preview_start()
     }
 
     fn letter_queue_update(&mut self) {
-        // compress letters in the queue if letter_compression_unlocked is true
-        if self.game_state.letter_compression_unlocked {
-            self.compress_letters();
-        }
-
-        self.clear_letters();
-        self.advance_letters();
-        self.refill_auto_lines();
-        self.sort_and_spawn();
-        for _ in 0..AUTO_TEXT_LINES {
-            let before = self.game_state.remaining_auto_lines.clone();
-            self.refill_auto_lines();
-            if before == self.game_state.remaining_auto_lines {
-                break;
-            }
-        }
+        let empty = Vec::new();
+        let lines = self
+            .text_sources
+            .get(&self.game_state.auto_queue.auto_current_text)
+            .unwrap_or(&empty);
+        let chars_processed = self
+            .game_state
+            .auto_queue
+            .update(self.game_state.letter_compression_unlocked, lines);
+        let money_change = self.calc_money_change(&chars_processed, &chars_processed);
+        self.increment_money(money_change);
     }
 
     fn handle_tracking(&mut self, now: std::time::Instant) {

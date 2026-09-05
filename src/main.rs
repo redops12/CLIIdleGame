@@ -1,6 +1,7 @@
 use std::io;
 use std::time::Duration;
 
+mod auto_queue;
 mod big_num;
 mod game;
 mod save;
