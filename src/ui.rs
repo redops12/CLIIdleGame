@@ -124,7 +124,9 @@ fn auto_zone<'a>(game: &'a Game, height: u16) -> Vec<Line<'a>> {
     let mut content = Vec::new();
 
     content.push(Line::from(Span::styled("_".repeat(width), Style::default().fg(Color::Cyan))));
-    content.push(Line::from(Span::styled(&game.game_state.remaining_auto_text, Style::default().fg(Color::Cyan))));
+    for line in &game.game_state.remaining_auto_lines {
+        content.push(Line::from(Span::styled(line.as_str(), Style::default().fg(Color::Cyan))));
+    }
     content.push(Line::from(Span::styled("^|".repeat(NUM_LETTERS - 1) + "^", Style::default().fg(Color::Cyan))));
 
     for row in 0..LETTER_QUEUE_HEIGHT {
@@ -161,7 +163,7 @@ fn auto_zone<'a>(game: &'a Game, height: u16) -> Vec<Line<'a>> {
     let pad = (height as usize).saturating_sub(content.len());
     let mut lines = vec![];
     for i in (0..pad).rev() {
-        let next_line = game.get_text_line(Some(game.game_state.auto_current_text), Some(game.game_state.auto_current_line + 1 + i));
+        let next_line = game.get_text_line(Some(game.game_state.auto_current_text), Some(game.auto_preview_start() + i));
         lines.push(Line::from(Span::styled(next_line, Style::default().fg(Color::Cyan))));
     }
     lines.extend(content);
