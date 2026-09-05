@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::auto_queue::{AutoQueue, AUTO_TEXT_LINES};
 use crate::big_num::BigDollar;
+use crate::test_mode::{AppModule, TestMode};
 use crate::upgrade::{get_upgrades, UpgradeId};
 
 const WASTELAND: &str = include_str!("../assets/wasteland.txt");
@@ -131,14 +132,29 @@ pub struct Game {
     pub last_profit_time: std::time::Instant,
     pub game_state: GameState,
     pub text_sources: HashMap<TextSource, Vec<String>>,
+    pub test_mode: Option<TestMode>,
 }
 
 impl Game {
+    #[allow(dead_code)]
     pub fn new(input_rx: Receiver<InputEvent>) -> Self {
         Self::from_state(input_rx, Self::default_state())
     }
 
+    pub fn new_with_test_mode(input_rx: Receiver<InputEvent>, test_mode: Option<TestMode>) -> Self {
+        Self::from_state_with_test_mode(input_rx, Self::default_state(), test_mode)
+    }
+
+    #[allow(dead_code)]
     pub fn from_state(input_rx: Receiver<InputEvent>, game_state: GameState) -> Self {
+        Self::from_state_with_test_mode(input_rx, game_state, None)
+    }
+
+    pub fn from_state_with_test_mode(
+        input_rx: Receiver<InputEvent>,
+        game_state: GameState,
+        test_mode: Option<TestMode>,
+    ) -> Self {
         let mut game = Self {
             input_rx,
             should_quit: false,
@@ -152,9 +168,24 @@ impl Game {
                 (TextSource::Bartleby, BARTLEBY.lines().map(String::from).collect()),
             ]),
             game_state,
+            test_mode,
         };
         game.refill_auto_lines();
+        game.recalculate_current_pane();
         game
+    }
+
+    pub fn is_module_active(&self, module: AppModule) -> bool {
+        match &self.test_mode {
+            Some(tm) => tm.is_active(module),
+            None => match module {
+                AppModule::Text => true,
+                AppModule::Upgrade => true,
+                AppModule::AutoQueue => self.game_state.automation_unlocked,
+                AppModule::Graph => self.game_state.graphs_unlocked,
+                AppModule::MoneyBar => true,
+            },
+        }
     }
 
     pub fn default_state() -> GameState {
@@ -274,14 +305,42 @@ impl Game {
 
 
     fn recalculate_current_pane(&mut self) {
-        match self.game_state.automation_unlocked {
+        if let Some(ref tm) = self.test_mode {
+            if tm.is_single_active(AppModule::AutoQueue) {
+                self.game_state.window_x = 0;
+                self.game_state.window_y = 0;
+                self.game_state.current_pane = WindowPanes::AutoPane;
+                return;
+            }
+            if tm.is_single_active(AppModule::Text) {
+                self.game_state.window_x = 0;
+                self.game_state.window_y = 0;
+                self.game_state.current_pane = WindowPanes::TextPane;
+                return;
+            }
+            if tm.is_single_active(AppModule::Upgrade) {
+                self.game_state.window_x = 0;
+                self.game_state.window_y = 0;
+                self.game_state.current_pane = WindowPanes::UpgradePane;
+                return;
+            }
+            if tm.is_single_active(AppModule::Graph) {
+                self.game_state.window_x = 0;
+                self.game_state.window_y = 0;
+                self.game_state.current_pane = WindowPanes::GraphPane;
+                return;
+            }
+        }
+
+        let auto_active = self.is_module_active(AppModule::AutoQueue);
+        match auto_active {
             false => {
                 self.game_state.window_x = self.game_state.window_x.min(0);
                 self.game_state.current_pane = match (self.game_state.window_x, self.game_state.window_y) {
                     (0, 0) => WindowPanes::TextPane,
                     (0, 1) => WindowPanes::UpgradePane,
                     _ => WindowPanes::TextPane,
-                }
+                };
             }
             true => {
                 self.game_state.window_x = self.game_state.window_x.min(1);
@@ -296,6 +355,9 @@ impl Game {
     }
 
     fn toggle_upgrade_pane(&mut self) {
+        if !self.is_module_active(AppModule::Upgrade) {
+            return;
+        }
         self.recalculate_current_pane();
         match self.game_state.current_pane {
             WindowPanes::UpgradePane => {
@@ -316,19 +378,19 @@ impl Game {
         use ratatui::layout::Position;
 
         let pos = Position { x: column, y: row };
-        if self.pane_rects.text.contains(pos) {
+        if self.is_module_active(AppModule::Text) && self.pane_rects.text.contains(pos) {
             self.game_state.window_x = 0;
             self.game_state.window_y = 0;
             self.game_state.current_pane = WindowPanes::TextPane;
-        } else if self.pane_rects.upgrade.contains(pos) {
+        } else if self.is_module_active(AppModule::Upgrade) && self.pane_rects.upgrade.contains(pos) {
             self.game_state.window_x = 0;
             self.game_state.window_y = 1;
             self.game_state.current_pane = WindowPanes::UpgradePane;
-        } else if self.pane_rects.auto_keys.is_some_and(|rect| rect.contains(pos)) {
+        } else if self.is_module_active(AppModule::AutoQueue) && self.pane_rects.auto_keys.is_some_and(|rect| rect.contains(pos)) {
             self.game_state.window_x = 1;
             self.game_state.window_y = 0;
             self.game_state.current_pane = WindowPanes::AutoPane;
-        } else if self.pane_rects.graph.is_some_and(|rect| rect.contains(pos)) {
+        } else if self.is_module_active(AppModule::Graph) && self.pane_rects.graph.is_some_and(|rect| rect.contains(pos)) {
             self.game_state.current_pane = WindowPanes::GraphPane;
         }
     }
@@ -500,7 +562,7 @@ impl Game {
 
         if now - self.last_update_time >= std::time::Duration::from_millis(400) {
             self.last_update_time = now;
-            if self.game_state.automation_unlocked {
+            if self.is_module_active(AppModule::AutoQueue) {
                 self.letter_queue_update();
             }
         }
@@ -542,5 +604,17 @@ mod tests {
         assert_eq!(loaded.base_letter_value, BigDollar::from(0.003));
         assert_eq!(loaded.trust_level, 0);
         assert_eq!(loaded.current_pane, WindowPanes::TextPane);
+    }
+
+    #[test]
+    fn test_mode_auto_queue_boot() {
+        let (_tx, rx) = crossbeam_channel::unbounded();
+        let game = Game::new_with_test_mode(rx, Some(TestMode::auto_queue()));
+
+        assert!(game.is_module_active(AppModule::AutoQueue));
+        assert!(!game.is_module_active(AppModule::Text));
+        assert!(!game.is_module_active(AppModule::Upgrade));
+        assert!(!game.is_module_active(AppModule::MoneyBar));
+        assert_eq!(game.game_state.current_pane, WindowPanes::AutoPane);
     }
 }
