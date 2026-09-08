@@ -14,6 +14,7 @@ use crate::text_sources::{TextSource, get_lines_from_source};
 pub const NUM_LETTERS: usize = 26;
 pub const MAX_LINE_LENGTH: usize = 40;
 pub const LETTER_QUEUE_LEN: usize = 10;
+pub const QUEUE_MOVED_PER_UPDATE: usize = 2;
 
 pub fn idx_to_letter(idx: usize) -> char {
     (b'a' + idx as u8) as char
@@ -21,10 +22,6 @@ pub fn idx_to_letter(idx: usize) -> char {
 
 pub fn idx_to_upper_letter(idx: usize) -> char {
     (b'A' + idx as u8) as char
-}
-
-pub fn key_count(counts: &HashMap<String, u32>, key: &str) -> u32 {
-    *counts.get(key).unwrap_or(&0)
 }
 
 pub fn count_color(count: u32) -> Color {
@@ -59,15 +56,20 @@ enum SorterPhase {
 pub struct AutoQueue {
     pub auto_current_text: TextSource,
     pub auto_current_line: usize,
-    pub counts: HashMap<String, u32>,
+    pub letter_counts: HashMap<char, u32>,
     #[serde(with = "BigArray")]
     pub letter_queue: [[char; NUM_LETTERS]; MAX_LINE_LENGTH + LETTER_QUEUE_LEN],
     pub letter_compression_unlocked: bool,
     phase: SorterPhase,
     line_num: usize,
-    sorter_delay: u64,
+    ready_delay: u128,
+    sorting_delay: u128,
+    queuing_delay: u128,
+    queue_delay: u128,
     #[serde(skip)]
     last_sorter_update: std::time::Instant,
+    #[serde(skip)]
+    last_queue_update: std::time::Instant,
 }
 
 impl Default for AutoQueue {
@@ -75,40 +77,44 @@ impl Default for AutoQueue {
         Self {
             auto_current_text: TextSource::Bartleby,
             auto_current_line: 0,
-            counts: HashMap::new(),
+            letter_counts: HashMap::new(),
             letter_queue: [[' '; NUM_LETTERS]; MAX_LINE_LENGTH + LETTER_QUEUE_LEN],
             letter_compression_unlocked: false,
             phase: SorterPhase::Ready,
             line_num: 0,
-            sorter_delay: 10,
+            ready_delay: 0,
+            sorting_delay: 100,
+            queuing_delay: 300,
+            queue_delay: 50,
             last_sorter_update: std::time::Instant::now(),
+            last_queue_update: std::time::Instant::now(),
         }
     }
 }
 
 impl AutoQueue {
-    #[allow(dead_code)]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     pub fn pane_width() -> u16 {
         auto_pane_width(NUM_LETTERS)
     }
 
-    fn increment_key_counts(&mut self, key: &str) {
-        *self.counts.entry(key.to_string()).or_insert(0) += 1;
+    pub fn get_letter_counts(&self, letter: char) -> u32 {
+        *self.letter_counts.get(&letter).unwrap_or(&0)
     }
 
     pub fn handle_input(&mut self, key: KeyCode) {
         if let KeyCode::Char(c) = key {
-            self.increment_key_counts(&c.to_string());
+            *self.letter_counts.entry(c).or_insert(0) += 1;
         }
     }
 
     fn run_sorter(&mut self) {
         match self.phase {
             SorterPhase::Ready => {
+                if self.last_sorter_update.elapsed().as_millis() < self.ready_delay {
+                    return;
+                }
+                self.last_sorter_update = std::time::Instant::now();
+
                 self.phase = SorterPhase::Sorting;
                 self.line_num = 0;
                 let next_line = get_lines_from_source(self.auto_current_text, self.auto_current_line);
@@ -122,6 +128,11 @@ impl AutoQueue {
                 self.auto_current_line += 1;
             }
             SorterPhase::Sorting => {
+                if self.last_sorter_update.elapsed().as_millis() < self.sorting_delay {
+                    return;
+                }
+                self.last_sorter_update = std::time::Instant::now();
+
                 if self.line_num >= NUM_LETTERS - 1 {
                     self.phase = SorterPhase::Queueing;
                     return
@@ -139,15 +150,23 @@ impl AutoQueue {
                 self.line_num += 1;
             }
             SorterPhase::Queueing => {
-                // move letters to the right putting one letter in the letter queue
-                for i in (1..MAX_LINE_LENGTH+1).rev() {
-                    for j in 0..NUM_LETTERS {
-                        if self.letter_queue[i][j] == ' ' {
-                            self.letter_queue[i][j] = self.letter_queue[i - 1][j];
-                            self.letter_queue[i-1][j] = ' ';
+                if self.last_sorter_update.elapsed().as_millis() < self.queuing_delay {
+                    return;
+                }
+                self.last_sorter_update = std::time::Instant::now();
+
+                for _ in 0..QUEUE_MOVED_PER_UPDATE {
+                    // move letters to the right putting one letter in the letter queue
+                    for i in (1..MAX_LINE_LENGTH+1).rev() {
+                        for j in 0..NUM_LETTERS {
+                            if self.letter_queue[i][j] == ' ' {
+                                self.letter_queue[i][j] = self.letter_queue[i - 1][j];
+                                self.letter_queue[i-1][j] = ' ';
+                            }
                         }
                     }
                 }
+
                 let all_spaces = (0..MAX_LINE_LENGTH).all(
                     |i| (0..NUM_LETTERS).all(
                         |j| self.letter_queue[i][j] == ' '));
@@ -162,9 +181,12 @@ impl AutoQueue {
         let mut processed = String::new();
         for j in 0..NUM_LETTERS {
             let letter = idx_to_letter(j);
-            if self.letter_queue[MAX_LINE_LENGTH + LETTER_QUEUE_LEN - 1][j] == letter {
+            if  self.letter_queue[MAX_LINE_LENGTH + LETTER_QUEUE_LEN - 1][j] == letter &&
+                *self.letter_counts.get(&letter).unwrap_or(&0) > 0
+            {
                 processed.push(letter);
                 self.letter_queue[MAX_LINE_LENGTH + LETTER_QUEUE_LEN - 1][j] = ' ';
+                *self.letter_counts.entry(letter).or_insert(1) -= 1;
             }
         }
 
@@ -172,6 +194,11 @@ impl AutoQueue {
     }
 
     fn run_queue(&mut self) {
+        if self.last_queue_update.elapsed().as_millis() < self.queue_delay {
+            return;
+        }
+        self.last_queue_update = std::time::Instant::now();
+
         // move letters to the right putting one letter in the letter queue
         for i in (MAX_LINE_LENGTH..MAX_LINE_LENGTH + LETTER_QUEUE_LEN).rev() {
             for j in 0..NUM_LETTERS {
@@ -187,12 +214,9 @@ impl AutoQueue {
         &mut self,
     ) -> String {
         let processed = self.process_letter_queue();
-        self.run_queue();
 
-        if self.last_sorter_update.elapsed().as_millis() >= self.sorter_delay as u128 {
-            self.last_sorter_update = std::time::Instant::now();
-            self.run_sorter();
-        }
+        self.run_queue();
+        self.run_sorter();
 
         processed
     }
@@ -210,7 +234,7 @@ impl AutoQueue {
         }
         for j in 0..NUM_LETTERS {
             let letter = idx_to_letter(j);
-            let color = count_color(key_count(&self.counts, &letter.to_string()));
+            let color = count_color(self.get_letter_counts(letter));
             let mut spans = Vec::new();
             for i in 0..MAX_LINE_LENGTH + LETTER_QUEUE_LEN {
                 spans.push(Span::styled(
@@ -222,7 +246,7 @@ impl AutoQueue {
                 format!(" {}", letter),
                 Style::default().fg(color),
             ));
-            spans.push(Span::raw(format!(" {}", key_count(&self.counts, &letter.to_string()))));
+            spans.push(Span::raw(format!(" {}", self.get_letter_counts(letter))));
             lines.push(Line::from(spans));
         }
 
