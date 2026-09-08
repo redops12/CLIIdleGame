@@ -1,7 +1,7 @@
 use std::collections::{HashMap};
 
 use crossterm::event::{KeyCode};
-use ratatui::layout::Rect;
+use ratatui::layout::{Constraint, Rect};
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
@@ -9,7 +9,10 @@ use ratatui::Frame;
 use serde::{Deserialize, Serialize};
 use serde_big_array::BigArray;
 
-use crate::text_sources::{TextSource, get_lines_from_source};
+use crate::game::{Game, GameState, WindowPanes};
+use crate::pane_module::{focus_border_color, LayoutContext, PaneModule};
+use crate::test_mode::{AppModule, TestMode};
+use crate::text_sources::{get_lines_from_source, TextSource};
 
 pub const NUM_LETTERS: usize = 26;
 pub const MAX_LINE_LENGTH: usize = 40;
@@ -260,20 +263,58 @@ impl AutoQueue {
         is_focused: bool,
     ) {
         let keys_height = area.height.saturating_sub(2);
-        let border_color = if is_focused {
-            Color::Cyan
-        } else {
-            Color::White
-        };
         let lines = self.render_lines(keys_height as usize);
         frame.render_widget(
             Paragraph::new(lines).block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .title("Keys")
-                    .border_style(Style::default().fg(border_color)),
+                    .title(Self::title())
+                    .border_style(Style::default().fg(focus_border_color(is_focused))),
             ),
             area,
         );
+    }
+}
+
+impl PaneModule for AutoQueue {
+    fn module_id() -> AppModule {
+        AppModule::AutoQueue
+    }
+
+    fn pane_id() -> Option<WindowPanes> {
+        Some(WindowPanes::AutoPane)
+    }
+
+    fn title() -> &'static str {
+        "Keys"
+    }
+
+    fn is_unlocked(state: &GameState, test_mode: Option<&TestMode>) -> bool {
+        match test_mode {
+            Some(tm) => tm.is_active(AppModule::AutoQueue),
+            None => state.automation_unlocked,
+        }
+    }
+
+    fn column_constraint(ctx: &LayoutContext) -> Option<Constraint> {
+        if ctx.has_side_neighbors(AppModule::AutoQueue) {
+            Some(Constraint::Length(Self::pane_width()))
+        } else {
+            Some(Constraint::Fill(1))
+        }
+    }
+
+    fn handle_input(game: &mut Game, key: KeyCode) {
+        game.game_state.auto_queue.handle_input(key);
+    }
+
+    fn update(game: &mut Game) {
+        let chars_processed = game.game_state.auto_queue.update();
+        let money_change = game.calc_money_change(&chars_processed, &chars_processed);
+        game.increment_money(money_change);
+    }
+
+    fn render(frame: &mut Frame, area: Rect, game: &Game, focused: bool) {
+        game.game_state.auto_queue.ui(frame, area, focused);
     }
 }

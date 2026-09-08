@@ -82,7 +82,7 @@ static UPGRADES: LazyLock<BTreeMap<UpgradeId, Upgrade>> = LazyLock::new(|| {
                 upgrade_unlock_condition: |game| game.high_water_money >= BigDollar::from(1.0),
                 on_buy: |game| {
                     game.capital_letter_bonus_unlocked = true;
-                    game.current_text = TextSource::IntroCapital;
+                    game.text_pane.current_text = TextSource::IntroCapital;
                 },
             },
         ),

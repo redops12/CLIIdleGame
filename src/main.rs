@@ -4,11 +4,16 @@ use std::time::Duration;
 mod auto_queue;
 mod big_num;
 mod game;
+mod graph_pane;
+mod money_bar;
+mod pane_module;
 mod save;
 mod test_mode;
+mod text_pane;
 mod text_sources;
 mod ui;
 mod upgrade;
+mod upgrade_pane;
 
 use crossbeam_channel::unbounded;
 use crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event};

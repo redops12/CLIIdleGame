@@ -7,11 +7,15 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent,
 
 use serde::{Deserialize, Serialize};
 
-use crate::auto_queue::{AutoQueue};
+use crate::auto_queue::AutoQueue;
 use crate::big_num::BigDollar;
+use crate::graph_pane::GraphPane;
+use crate::money_bar::MoneyBar;
+use crate::pane_module::PaneModule;
 use crate::test_mode::{AppModule, TestMode};
+use crate::text_pane::TextPane;
 use crate::upgrade::{get_upgrades, UpgradeId};
-use crate::text_sources::{TextSource, get_lines_from_source};
+use crate::upgrade_pane::UpgradePane;
 
 pub const MAX_TRUST_LEVEL: i32 = 100;
 pub const TRUST_SCALE: f64 = 1.15;
@@ -39,13 +43,12 @@ pub struct PaneRects {
     pub auto_keys: Option<ratatui::layout::Rect>,
     pub graph: Option<ratatui::layout::Rect>,
 }
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct GameState {
-    // Text variables
-    pub current_text: TextSource,
-    pub current_line: usize,
-    pub typed: String,
+    #[serde(flatten)]
+    pub text_pane: TextPane,
 
     #[serde(flatten)]
     pub auto_queue: AutoQueue,
@@ -56,7 +59,7 @@ pub struct GameState {
     // secret stats
     pub high_water_money: BigDollar,
     pub total_money_earned: BigDollar,
-    pub second_profit_buckets: Vec<BigDollar>, // tracks income from each second for the last SECOND_POLL_WINDOW seconds
+    pub second_profit_buckets: Vec<BigDollar>,
     pub second_profit_bucket_head: usize,
 
     // progression variables
@@ -70,8 +73,6 @@ pub struct GameState {
     pub graphs_unlocked: bool,
     pub disable_penalty: bool,
 
-    // top left is 0, 0
-    // down is increasing y, right is increasing x
     pub window_x: u16,
     pub window_y: u16,
     pub current_pane: WindowPanes,
@@ -82,9 +83,7 @@ pub struct GameState {
 impl Default for GameState {
     fn default() -> Self {
         Self {
-            typed: String::new(),
-            current_text: TextSource::Intro,
-            current_line: 0,
+            text_pane: TextPane::default(),
             auto_queue: AutoQueue::default(),
             money: BigDollar::from(0),
             high_water_money: BigDollar::from(0),
@@ -154,15 +153,14 @@ impl Game {
     }
 
     pub fn is_module_active(&self, module: AppModule) -> bool {
-        match &self.test_mode {
-            Some(tm) => tm.is_active(module),
-            None => match module {
-                AppModule::Text => true,
-                AppModule::Upgrade => true,
-                AppModule::AutoQueue => self.game_state.automation_unlocked,
-                AppModule::Graph => self.game_state.graphs_unlocked,
-                AppModule::MoneyBar => true,
-            },
+        let test_mode = self.test_mode.as_ref();
+        let state = &self.game_state;
+        match module {
+            AppModule::Text => TextPane::is_unlocked(state, test_mode),
+            AppModule::Upgrade => UpgradePane::is_unlocked(state, test_mode),
+            AppModule::AutoQueue => AutoQueue::is_unlocked(state, test_mode),
+            AppModule::Graph => GraphPane::is_unlocked(state, test_mode),
+            AppModule::MoneyBar => MoneyBar::is_unlocked(state, test_mode),
         }
     }
 
@@ -195,10 +193,7 @@ impl Game {
     }
 
     pub fn get_text_line(&self, offset: Option<usize>) -> &str {
-        get_lines_from_source(
-            self.game_state.current_text,
-            self.game_state.current_line + offset.unwrap_or(0),
-        )
+        self.game_state.text_pane.get_line(offset)
     }
 
     pub fn calc_money_change(&self, typed: &str, reference: &str) -> BigDollar {
@@ -222,7 +217,6 @@ impl Game {
                     money_change += self.game_state.base_letter_value * TRUST_SCALE.powi(self.game_state.trust_level) * mult;
                     logging::debug(&format!("money change was {money_change}"));
                 }
-                // Wrong char, missing char, or extra typed char
                 _ => {
                     if self.game_state.disable_penalty {
                         continue;
@@ -248,7 +242,6 @@ impl Game {
             trust_level.min(0)
         }
     }
-
 
     fn recalculate_current_pane(&mut self) {
         if let Some(ref tm) = self.test_mode {
@@ -341,37 +334,6 @@ impl Game {
         }
     }
 
-    fn text_pane_input(&mut self, key: KeyCode) {
-        match key {
-            KeyCode::Char(c) => {
-                self.game_state.typed.push(c);
-            }
-            KeyCode::Enter => {
-                let current_line: &str = self.get_text_line(None);
-                let typed_chars: Vec<char> = self.game_state.typed.chars().collect();
-                let ref_chars: Vec<char> = current_line.chars().collect();
-                let money_change = self.calc_money_change(&self.game_state.typed, current_line);
-
-                logging::debug(&format!(
-                    "Scored line {}: money_change={money_change} (typed={} chars, ref={} chars)",
-                    self.game_state.current_line,
-                    typed_chars.len(),
-                    ref_chars.len()
-                ));
-                self.increment_money(money_change);
-                if self.game_state.streaks_unlocked {
-                    self.game_state.trust_level = self.calc_trust(&String::from_iter(ref_chars.clone()), &String::from_iter(typed_chars.clone()), self.game_state.trust_level);
-                }
-                self.game_state.typed = String::new();
-                self.game_state.current_line += 1;
-            }
-            KeyCode::Backspace => {
-                self.game_state.typed.pop();
-            }
-            _ => {}
-        }
-    }
-
     pub fn buy_upgrade(&mut self, upgrade_id: UpgradeId) {
         let Some(upgrade) = get_upgrades().get(&upgrade_id) else {
             logging::info(&format!("Upgrade {:?} does not exist", upgrade_id));
@@ -417,16 +379,18 @@ impl Game {
             .collect()
     }
 
-    pub fn upgrade_pane_input(&mut self, key: KeyCode) {
-        if let KeyCode::Char(c) = key {
-            let Some(&upgrade_id) = self.get_displayed_upgrades()
-                .iter().enumerate()
-                .find(|(i, _)| UPGRADE_KEYS.get(*i) == Some(&c))
-                .map(|(_, upgrade_id)| upgrade_id) else {
-                    logging::info(&format!("No upgrade found for key '{}'", c));
-                    return;
-                };
-            self.buy_upgrade(upgrade_id);
+    fn dispatch_pane_input(&mut self, key: KeyCode) {
+        match self.game_state.current_pane {
+            WindowPanes::TextPane if self.is_module_active(AppModule::Text) => {
+                <TextPane as PaneModule>::handle_input(self, key);
+            }
+            WindowPanes::UpgradePane if self.is_module_active(AppModule::Upgrade) => {
+                <UpgradePane as PaneModule>::handle_input(self, key);
+            }
+            WindowPanes::AutoPane if self.is_module_active(AppModule::AutoQueue) => {
+                <AutoQueue as PaneModule>::handle_input(self, key);
+            }
+            _ => {}
         }
     }
 
@@ -455,21 +419,10 @@ impl Game {
                         _ => {}
                     }
                     self.recalculate_current_pane();
-                    match self.game_state.current_pane {
-                        WindowPanes::TextPane => self.text_pane_input(key.code),
-                        WindowPanes::UpgradePane => self.upgrade_pane_input(key.code),
-                        WindowPanes::AutoPane => self.game_state.auto_queue.handle_input(key.code),
-                        _ => {}
-                    }
+                    self.dispatch_pane_input(key.code);
                 }
             }
         }
-    }
-
-    fn letter_queue_update(&mut self) {
-        let chars_processed = self.game_state.auto_queue.update();
-        let money_change = self.calc_money_change(&chars_processed, &chars_processed);
-        self.increment_money(money_change);
     }
 
     fn handle_tracking(&mut self, now: std::time::Instant) {
@@ -485,7 +438,7 @@ impl Game {
         self.handle_tracking(now);
 
         if self.is_module_active(AppModule::AutoQueue) {
-            self.letter_queue_update();
+            <AutoQueue as PaneModule>::update(self);
         }
     }
 }
@@ -499,7 +452,7 @@ mod tests {
     fn game_state_json_roundtrip() {
         let mut state = Game::default_state();
         state.money = BigDollar::from(42);
-        state.current_line = 3;
+        state.text_pane.current_line = 3;
         state.upgrade_levels.insert(UpgradeId::UnlockStreak, 1);
         state.automation_unlocked = true;
 
@@ -507,7 +460,7 @@ mod tests {
         let loaded: GameState = serde_json::from_str(&json).unwrap();
 
         assert_eq!(loaded.money, state.money);
-        assert_eq!(loaded.current_line, state.current_line);
+        assert_eq!(loaded.text_pane.current_line, state.text_pane.current_line);
         assert_eq!(loaded.upgrade_levels, state.upgrade_levels);
         assert_eq!(loaded.automation_unlocked, state.automation_unlocked);
     }
@@ -518,7 +471,7 @@ mod tests {
         let loaded: GameState = serde_json::from_str(json).unwrap();
 
         assert_eq!(loaded.money, BigDollar::from(42));
-        assert_eq!(loaded.current_line, 3);
+        assert_eq!(loaded.text_pane.current_line, 3);
         assert_eq!(loaded.automation_unlocked, false);
         assert_eq!(loaded.capital_letter_bonus_unlocked, false);
         assert_eq!(loaded.auto_queue.letter_compression_unlocked, false);
