@@ -7,8 +7,8 @@ use ratatui::widgets::{Axis, Block, Borders, Chart, Dataset, GraphType};
 use ratatui::Frame;
 
 use crate::big_num::BigDollar;
-use crate::game::{Game, SECOND_POLL_WINDOW};
-use crate::pane_module::{focus_border_color, LayoutContext, PaneModule, ModuleId};
+use crate::game::{Game, NUM_POLLS};
+use crate::pane_module::{focus_border_color, PaneModule};
 
 const GRAY_MID: Color = Color::Rgb(140, 140, 140);
 
@@ -41,11 +41,11 @@ impl GraphPane {
 
     pub fn ui(frame: &mut Frame, area: Rect, focused: bool, game: &Game) {
         let mut v: Vec<(f64, f64)> = Vec::new();
-        for i in 0..SECOND_POLL_WINDOW {
+        for i in 0..NUM_POLLS {
             let idx =
-                (game.game_state.second_profit_bucket_head + 1 + i) % (SECOND_POLL_WINDOW + 1);
-            let value = game.game_state.second_profit_buckets[idx];
-            v.push((i as f64, value.into()));
+                (game.game_state.second_profit_bucket_head + 1 + i) % (NUM_POLLS + 1);
+            let value = game.game_state.five_second_profit_buckets[idx];
+            v.push((i as f64, (value / 5).into()));
         }
         let data: &[(f64, f64)] = &v;
         let min_profit = data
@@ -60,7 +60,7 @@ impl GraphPane {
             .fold(f64::NEG_INFINITY, f64::max);
         let y_bounds = Self::profit_chart_y_bounds(min_profit, max_profit);
         let y_labels = Self::profit_chart_y_labels(y_bounds);
-        let x_max = SECOND_POLL_WINDOW as f64;
+        let x_max = NUM_POLLS as f64;
         let zero_line = [(0.0, 0.0), (x_max, 0.0)];
 
         let chart = Chart::new(vec![
@@ -112,12 +112,8 @@ impl PaneModule for GraphPane {
         "Graphs"
     }
 
-    fn column_constraint(ctx: &LayoutContext) -> Option<Constraint> {
-        if ctx.has_side_neighbors(ModuleId::Graph) {
-            Some(Constraint::Length(SECOND_POLL_WINDOW as u16 * 2 + 2))
-        } else {
-            Some(Constraint::Fill(1))
-        }
+    fn main_column_row_constraint() -> Option<Constraint> {
+        Some(Constraint::Min(10))
     }
 
     fn render(frame: &mut Frame, area: Rect, game: &Game, focused: bool) {

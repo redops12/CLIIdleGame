@@ -18,7 +18,7 @@ use crate::upgrade_pane::UpgradePane;
 
 pub const MAX_TRUST_LEVEL: i32 = 100;
 pub const TRUST_SCALE: f64 = 1.15;
-pub const SECOND_POLL_WINDOW: usize = 30;
+pub const NUM_POLLS: usize = 30;
 
 pub const UPGRADE_KEYS: [char; 10] = ['q', 'w', 'e', 'r', 't', 'a', 's', 'd', 'f', 'g'];
 
@@ -31,8 +31,8 @@ pub enum InputEvent {
 pub struct PaneRects {
     pub text: ratatui::layout::Rect,
     pub upgrade: ratatui::layout::Rect,
-    pub auto_keys: Option<ratatui::layout::Rect>,
     pub graph: Option<ratatui::layout::Rect>,
+    pub auto_keys: Option<ratatui::layout::Rect>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -50,7 +50,7 @@ pub struct GameState {
     // secret stats
     pub high_water_money: BigDollar,
     pub total_money_earned: BigDollar,
-    pub second_profit_buckets: Vec<BigDollar>,
+    pub five_second_profit_buckets: Vec<BigDollar>,
     pub second_profit_bucket_head: usize,
 
     // progression variables
@@ -79,7 +79,7 @@ impl Default for GameState {
             money: BigDollar::from(30.0),
             high_water_money: BigDollar::from(0),
             total_money_earned: BigDollar::from(30.0),
-            second_profit_buckets: vec![BigDollar::from(0); SECOND_POLL_WINDOW + 1],
+            five_second_profit_buckets: vec![BigDollar::from(0); NUM_POLLS + 1],
             second_profit_bucket_head: 0,
             upgrade_levels: HashMap::new(),
             trust_level: 0,
@@ -199,12 +199,11 @@ impl Game {
         self.game_state.money += amount;
         self.game_state.high_water_money = self.game_state.high_water_money.max(self.game_state.money);
         self.game_state.total_money_earned += amount;
-        self.game_state.second_profit_buckets[self.game_state.second_profit_bucket_head] += amount;
+        self.game_state.five_second_profit_buckets[self.game_state.second_profit_bucket_head] += amount;
     }
 
     pub fn decrement_money(&mut self, amount: BigDollar) {
         self.game_state.money -= amount;
-        self.game_state.second_profit_buckets[self.game_state.second_profit_bucket_head] -= amount;
     }
 
     pub fn get_text_line(&self, offset: Option<usize>) -> &str {
@@ -264,9 +263,6 @@ impl Game {
                 None => {}
                 Some(module) =>
                 {
-
-                    self.game_state.window_x = 0;
-                    self.game_state.window_y = 0;
                     self.game_state.current_pane = module;
                     return;
                 }
@@ -274,8 +270,8 @@ impl Game {
         }
 
         if let Some(module) = self.get_floating_pane() {
-            self.game_state.window_x = 0;
-            self.game_state.window_y = 0;
+            self.game_state.window_x = self.game_state.previous_window_x;
+            self.game_state.window_y = self.game_state.previous_window_y;
             self.game_state.current_pane = module;
             return;
         }
@@ -324,6 +320,10 @@ impl Game {
 
     pub fn handle_mouse_click(&mut self, column: u16, row: u16) {
         use ratatui::layout::Position;
+        if let Some(module) = self.get_floating_pane() {
+            self.game_state.current_pane = module;
+            return;
+        }
 
         let pos = Position { x: column, y: row };
         if self.is_module_active(ModuleId::Text) && self.pane_rects.text.contains(pos) {
@@ -416,7 +416,13 @@ impl Game {
                 }
                 InputEvent::Key(key) => {
                     match key.code {
-                        KeyCode::Esc => self.should_quit = true,
+                        KeyCode::Esc => {
+                            if let Some(module) = self.get_floating_pane() {
+                                self.remove_floating_pane(module);
+                            } else {
+                                self.should_quit = true;
+                            }
+                        }
                         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                             self.should_quit = true;
                         }
@@ -438,10 +444,10 @@ impl Game {
     }
 
     fn handle_tracking(&mut self, now: std::time::Instant) {
-        if now - self.last_profit_time >= std::time::Duration::from_secs(1) {
+        if now - self.last_profit_time >= std::time::Duration::from_secs(5) {
             self.last_profit_time = now;
-            self.game_state.second_profit_bucket_head = (self.game_state.second_profit_bucket_head + 1) % (SECOND_POLL_WINDOW + 1);
-            self.game_state.second_profit_buckets[self.game_state.second_profit_bucket_head] = BigDollar::from(0);
+            self.game_state.second_profit_bucket_head = (self.game_state.second_profit_bucket_head + 1) % (NUM_POLLS + 1);
+            self.game_state.five_second_profit_buckets[self.game_state.second_profit_bucket_head] = BigDollar::from(0);
         }
     }
 

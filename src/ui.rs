@@ -1,5 +1,6 @@
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::widgets::Clear;
+use ratatui::widgets::{Clear, Block};
+use ratatui::style::Style;
 use ratatui::Frame;
 
 use crate::auto_queue::AutoQueue;
@@ -7,7 +8,7 @@ use crate::auto_typer_selector::AutoTyperSelector;
 use crate::game::{Game, PaneRects};
 use crate::graph_pane::GraphPane;
 use crate::money_bar::MoneyBar;
-use crate::pane_module::{LayoutContext, PaneModule, ModuleId};
+use crate::pane_module::{focus_background_color, LayoutContext, PaneModule, ModuleId};
 use crate::text_pane::TextPane;
 use crate::upgrade_pane::UpgradePane;
 
@@ -52,7 +53,6 @@ pub fn compute_pane_layout(area: Rect, game: &Game) -> PaneRects {
     let mut column_constraints = Vec::new();
     let mut main_col_idx = None;
     let mut keys_col_idx = None;
-    let mut graph_col_idx = None;
     let mut col_count = 0;
 
     if ctx.has_main_column() {
@@ -66,14 +66,6 @@ pub fn compute_pane_layout(area: Rect, game: &Game) -> PaneRects {
             column_constraints.push(constraint);
         }
         keys_col_idx = Some(col_count);
-        col_count += 1;
-    }
-
-    if ctx.graph_active {
-        if let Some(constraint) = GraphPane::column_constraint(&ctx) {
-            column_constraints.push(constraint);
-        }
-        graph_col_idx = Some(col_count);
     }
 
     if column_constraints.is_empty() {
@@ -82,29 +74,37 @@ pub fn compute_pane_layout(area: Rect, game: &Game) -> PaneRects {
 
     let columns = Layout::horizontal(column_constraints).split(area);
 
-    let (text_rect, upgrade_rect) = if let Some(idx) = main_col_idx {
+    let (text_rect, upgrade_rect, graph_rect) = if let Some(idx) = main_col_idx {
         let col = columns[idx];
-        if ctx.text_active && ctx.upgrade_active {
+        if ctx.text_active && ctx.upgrade_active && ctx.graph_active {
+            let middle = Layout::vertical([
+                TextPane::main_column_row_constraint().unwrap(),
+                UpgradePane::main_column_row_constraint().unwrap(),
+                GraphPane::main_column_row_constraint().unwrap(),
+            ])
+            .split(col);
+            (middle[0], middle[1], Some(middle[2]))
+        } else if ctx.text_active && ctx.upgrade_active {
             let middle = Layout::vertical([
                 TextPane::main_column_row_constraint().unwrap(),
                 UpgradePane::main_column_row_constraint().unwrap(),
             ])
             .split(col);
-            (middle[0], middle[1])
+            (middle[0], middle[1], None)
         } else if ctx.text_active {
-            (col, Rect::default())
+            (col, Rect::default(), None)
         } else {
-            (Rect::default(), col)
+            (Rect::default(), col, None)
         }
     } else {
-        (Rect::default(), Rect::default())
+        (Rect::default(), Rect::default(), None)
     };
 
     PaneRects {
         text: text_rect,
         upgrade: upgrade_rect,
+        graph: graph_rect,
         auto_keys: keys_col_idx.map(|idx| columns[idx]),
-        graph: graph_col_idx.map(|idx| columns[idx]),
     }
 }
 
@@ -125,6 +125,9 @@ fn render_pane(
     }
 
     let focused = game.game_state.current_pane == module;
+
+    let bg = Block::default().style(Style::default().bg(focus_background_color(focused)));
+    frame.render_widget(bg, area);
 
     match module {
         ModuleId::Text => TextPane::render(frame, area, game, focused),

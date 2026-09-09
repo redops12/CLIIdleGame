@@ -101,6 +101,14 @@ pub fn focus_border_color(focused: bool) -> Color {
     }
 }
 
+pub fn focus_background_color(focused: bool) -> Color {
+    if focused {
+        Color::Rgb(55, 34, 34)
+    } else {
+        Color::Reset
+    }
+}
+
 /// Shared interface for game UI modules (panes and overlays).
 pub trait PaneModule {
     fn title() -> &'static str;

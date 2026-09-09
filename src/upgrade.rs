@@ -136,7 +136,7 @@ static UPGRADES: LazyLock<BTreeMap<UpgradeId, Upgrade>> = LazyLock::new(|| {
             UpgradeId::AutoLetterCount,
             Upgrade {
                 costs: (0..200)
-                    .map(|i| BigDollar::from(0.2 * (i as f64) * (i as f64) + 1000.0))
+                    .map(|i| BigDollar::from(10.0 * (i as f64) * (i as f64) + 1000.0))
                     .collect(),
                 infinite: false,
                 name: "Auto letter count",

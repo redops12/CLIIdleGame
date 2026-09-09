@@ -23,7 +23,7 @@ const READY_DELAY: u128   = 0;
 const SORTING_DELAY: u128 = 100;
 const QUEUING_DELAY: u128 = 300;
 const QUEUE_DELAY: u128   = 50;
-const LETTER_INCREMENT_DELAY: u128 = 2000;
+const LETTER_INCREMENT_DELAY: u128 = 5000;
 
 pub fn idx_to_letter(idx: usize) -> char {
     (b'a' + idx as u8) as char
@@ -101,10 +101,14 @@ impl AutoQueue {
         *entry = (*entry + count).min(999);
     }
 
-    pub fn handle_input(&mut self, key: KeyCode) {
+    pub fn handle_input(&mut self, key: KeyCode) -> bool {
         if let KeyCode::Char(c) = key {
+            if c == '?' {
+                return true
+            }
             self.increment_letter_count(c.to_ascii_lowercase(), 1);
         }
+        return false
     }
 
     fn increment_letter_counts(&mut self) {
@@ -236,13 +240,24 @@ impl AutoQueue {
     pub fn render_lines(
         &self,
         height: usize,
+        width: usize,
     ) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
         let source_length = height - NUM_LETTERS;
         for i in (0..source_length).rev() {
             let line_idx = self.auto_current_line + i;
             let line = get_lines_from_source(self.auto_current_text, line_idx);
-            lines.push(Line::from(line));
+            if i >= source_length - 2 {
+                let help_text: Vec<&str> = vec!["selector", "'?' for"];
+                let curr_help = help_text[i - (source_length - 2)];
+                lines.push(Line::from(vec![
+                        Span::raw(line),
+                        Span::raw(" ".repeat(width - line.len() - curr_help.len())),
+                        Span::styled(curr_help, Style::default().fg(Color::Cyan)),
+                ]));
+            } else {
+                lines.push(Line::from(line));
+            }
         }
         for j in 0..NUM_LETTERS {
             let letter = idx_to_letter(j);
@@ -272,7 +287,8 @@ impl AutoQueue {
         is_focused: bool,
     ) {
         let keys_height = area.height.saturating_sub(2);
-        let lines = self.render_lines(keys_height as usize);
+        let width = area.width.saturating_sub(2);
+        let lines = self.render_lines(keys_height as usize, width as usize);
         frame.render_widget(
             Paragraph::new(lines).block(
                 Block::default()
@@ -299,7 +315,10 @@ impl PaneModule for AutoQueue {
     }
 
     fn handle_input(game: &mut Game, key: KeyCode) {
-        game.game_state.auto_queue.handle_input(key);
+        let ret = game.game_state.auto_queue.handle_input(key);
+        if ret {
+            game.add_floating_pane(ModuleId::AutoTyperSelector);
+        }
     }
 
     fn update(game: &mut Game) {
