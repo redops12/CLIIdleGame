@@ -2,6 +2,7 @@ use std::io;
 use std::time::Duration;
 
 mod auto_queue;
+mod auto_typer_selector;
 mod big_num;
 mod game;
 mod graph_pane;

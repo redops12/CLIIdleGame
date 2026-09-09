@@ -4,9 +4,8 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Frame;
 
-use crate::game::{Game, GameState};
+use crate::game::Game;
 use crate::pane_module::PaneModule;
-use crate::test_mode::{AppModule, TestMode};
 
 pub const MONEY_BAR_HEIGHT: u16 = 3;
 const MONEY_GOLD: Color = Color::Rgb(255, 215, 0);
@@ -51,19 +50,8 @@ impl MoneyBar {
 }
 
 impl PaneModule for MoneyBar {
-    fn module_id() -> AppModule {
-        AppModule::MoneyBar
-    }
-
     fn title() -> &'static str {
         "Money"
-    }
-
-    fn is_unlocked(_state: &GameState, test_mode: Option<&TestMode>) -> bool {
-        match test_mode {
-            Some(tm) => tm.is_active(AppModule::MoneyBar),
-            None => true,
-        }
     }
 
     fn render(frame: &mut Frame, area: Rect, game: &Game, _focused: bool) {

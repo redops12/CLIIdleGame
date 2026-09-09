@@ -8,11 +8,10 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent,
 use serde::{Deserialize, Serialize};
 
 use crate::auto_queue::AutoQueue;
+use crate::auto_typer_selector::AutoTyperSelector;
 use crate::big_num::BigDollar;
-use crate::graph_pane::GraphPane;
-use crate::money_bar::MoneyBar;
-use crate::pane_module::PaneModule;
-use crate::test_mode::{AppModule, TestMode};
+use crate::pane_module::{ModuleId, PaneModule};
+use crate::test_mode::TestMode;
 use crate::text_pane::TextPane;
 use crate::upgrade::{get_upgrades, UpgradeId};
 use crate::upgrade_pane::UpgradePane;
@@ -20,14 +19,6 @@ use crate::upgrade_pane::UpgradePane;
 pub const MAX_TRUST_LEVEL: i32 = 100;
 pub const TRUST_SCALE: f64 = 1.15;
 pub const SECOND_POLL_WINDOW: usize = 30;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum WindowPanes {
-    TextPane,
-    UpgradePane,
-    AutoPane,
-    GraphPane,
-}
 
 pub const UPGRADE_KEYS: [char; 10] = ['q', 'w', 'e', 'r', 't', 'a', 's', 'd', 'f', 'g'];
 
@@ -75,7 +66,7 @@ pub struct GameState {
 
     pub window_x: u16,
     pub window_y: u16,
-    pub current_pane: WindowPanes,
+    pub current_pane: ModuleId,
     previous_window_x: u16,
     previous_window_y: u16,
 }
@@ -85,9 +76,9 @@ impl Default for GameState {
         Self {
             text_pane: TextPane::default(),
             auto_queue: AutoQueue::default(),
-            money: BigDollar::from(0),
+            money: BigDollar::from(30.0),
             high_water_money: BigDollar::from(0),
-            total_money_earned: BigDollar::from(0),
+            total_money_earned: BigDollar::from(30.0),
             second_profit_buckets: vec![BigDollar::from(0); SECOND_POLL_WINDOW + 1],
             second_profit_bucket_head: 0,
             upgrade_levels: HashMap::new(),
@@ -101,7 +92,7 @@ impl Default for GameState {
             disable_penalty: false,
             window_x: 1,
             window_y: 0,
-            current_pane: WindowPanes::TextPane,
+            current_pane: ModuleId::Text,
             previous_window_x: 1,
             previous_window_y: 0,
         }
@@ -109,14 +100,15 @@ impl Default for GameState {
 }
 
 pub struct Game {
+    pub game_state: GameState,
+
     input_rx: Receiver<InputEvent>,
     pub should_quit: bool,
     pub pane_rects: PaneRects,
 
-    pub last_update_time: std::time::Instant,
     pub last_profit_time: std::time::Instant,
-    pub game_state: GameState,
     pub test_mode: Option<TestMode>,
+    pub floating_pane_queue: Vec<ModuleId>,
 }
 
 impl Game {
@@ -140,28 +132,51 @@ impl Game {
         test_mode: Option<TestMode>,
     ) -> Self {
         let mut game = Self {
+            game_state,
             input_rx,
             should_quit: false,
             pane_rects: PaneRects::default(),
-            last_update_time: std::time::Instant::now(),
             last_profit_time: std::time::Instant::now(),
-            game_state,
             test_mode,
+            floating_pane_queue: Vec::new(),
         };
         game.recalculate_current_pane();
         game
     }
 
-    pub fn is_module_active(&self, module: AppModule) -> bool {
+    pub fn is_module_active(&self, module: ModuleId) -> bool {
         let test_mode = self.test_mode.as_ref();
-        let state = &self.game_state;
-        match module {
-            AppModule::Text => TextPane::is_unlocked(state, test_mode),
-            AppModule::Upgrade => UpgradePane::is_unlocked(state, test_mode),
-            AppModule::AutoQueue => AutoQueue::is_unlocked(state, test_mode),
-            AppModule::Graph => GraphPane::is_unlocked(state, test_mode),
-            AppModule::MoneyBar => MoneyBar::is_unlocked(state, test_mode),
+        if let Some(tm) = test_mode {
+            tm.is_active(module)
+        } else {
+            match module {
+                ModuleId::Text => true,
+                ModuleId::Upgrade => true,
+                ModuleId::AutoQueue => self.game_state.automation_unlocked,
+                ModuleId::Graph => self.game_state.graphs_unlocked,
+                ModuleId::MoneyBar => true,
+                ModuleId::AutoTyperSelector => true,
+            }
         }
+    }
+
+    pub fn get_floating_pane(&self) -> Option<ModuleId> {
+        let test_mode = self.test_mode.as_ref();
+        if let Some(tm) = test_mode {
+            return tm.single_active_module()
+        }
+        self.floating_pane_queue.first().copied()
+    }
+
+    pub fn add_floating_pane(&mut self, module: ModuleId) {
+        if !self.floating_pane_queue.contains(&module) {
+            self.floating_pane_queue.push(module);
+        }
+    }
+
+    pub fn remove_floating_pane(&mut self, module: ModuleId) {
+        self.floating_pane_queue.retain(|&m| m != module);
+        self.recalculate_current_pane();
     }
 
     pub fn default_state() -> GameState {
@@ -245,61 +260,55 @@ impl Game {
 
     fn recalculate_current_pane(&mut self) {
         if let Some(ref tm) = self.test_mode {
-            if tm.is_single_active(AppModule::AutoQueue) {
-                self.game_state.window_x = 0;
-                self.game_state.window_y = 0;
-                self.game_state.current_pane = WindowPanes::AutoPane;
-                return;
-            }
-            if tm.is_single_active(AppModule::Text) {
-                self.game_state.window_x = 0;
-                self.game_state.window_y = 0;
-                self.game_state.current_pane = WindowPanes::TextPane;
-                return;
-            }
-            if tm.is_single_active(AppModule::Upgrade) {
-                self.game_state.window_x = 0;
-                self.game_state.window_y = 0;
-                self.game_state.current_pane = WindowPanes::UpgradePane;
-                return;
-            }
-            if tm.is_single_active(AppModule::Graph) {
-                self.game_state.window_x = 0;
-                self.game_state.window_y = 0;
-                self.game_state.current_pane = WindowPanes::GraphPane;
-                return;
+            match tm.single_active_module() {
+                None => {}
+                Some(module) =>
+                {
+
+                    self.game_state.window_x = 0;
+                    self.game_state.window_y = 0;
+                    self.game_state.current_pane = module;
+                    return;
+                }
             }
         }
 
-        let auto_active = self.is_module_active(AppModule::AutoQueue);
+        if let Some(module) = self.get_floating_pane() {
+            self.game_state.window_x = 0;
+            self.game_state.window_y = 0;
+            self.game_state.current_pane = module;
+            return;
+        }
+
+        let auto_active = self.is_module_active(ModuleId::AutoQueue);
         match auto_active {
             false => {
                 self.game_state.window_x = self.game_state.window_x.min(0);
                 self.game_state.current_pane = match (self.game_state.window_x, self.game_state.window_y) {
-                    (0, 0) => WindowPanes::TextPane,
-                    (0, 1) => WindowPanes::UpgradePane,
-                    _ => WindowPanes::TextPane,
+                    (0, 0) => ModuleId::Text,
+                    (0, 1) => ModuleId::Upgrade,
+                    _ => ModuleId::Text,
                 };
             }
             true => {
                 self.game_state.window_x = self.game_state.window_x.min(1);
                 self.game_state.current_pane = match (self.game_state.window_x, self.game_state.window_y) {
-                    (0, 0) => WindowPanes::TextPane,
-                    (0, 1) => WindowPanes::UpgradePane,
-                    (1, _) => WindowPanes::AutoPane,
-                    _ => WindowPanes::TextPane,
+                    (0, 0) => ModuleId::Text,
+                    (0, 1) => ModuleId::Upgrade,
+                    (1, _) => ModuleId::AutoQueue,
+                    _ => ModuleId::Text,
                 };
             }
         }
     }
 
     fn toggle_upgrade_pane(&mut self) {
-        if !self.is_module_active(AppModule::Upgrade) {
+        if !self.is_module_active(ModuleId::Upgrade) {
             return;
         }
         self.recalculate_current_pane();
         match self.game_state.current_pane {
-            WindowPanes::UpgradePane => {
+            ModuleId::Upgrade => {
                 self.game_state.window_x = self.game_state.previous_window_x;
                 self.game_state.window_y = self.game_state.previous_window_y;
             }
@@ -317,20 +326,20 @@ impl Game {
         use ratatui::layout::Position;
 
         let pos = Position { x: column, y: row };
-        if self.is_module_active(AppModule::Text) && self.pane_rects.text.contains(pos) {
+        if self.is_module_active(ModuleId::Text) && self.pane_rects.text.contains(pos) {
             self.game_state.window_x = 0;
             self.game_state.window_y = 0;
-            self.game_state.current_pane = WindowPanes::TextPane;
-        } else if self.is_module_active(AppModule::Upgrade) && self.pane_rects.upgrade.contains(pos) {
+            self.game_state.current_pane = ModuleId::Text;
+        } else if self.is_module_active(ModuleId::Upgrade) && self.pane_rects.upgrade.contains(pos) {
             self.game_state.window_x = 0;
             self.game_state.window_y = 1;
-            self.game_state.current_pane = WindowPanes::UpgradePane;
-        } else if self.is_module_active(AppModule::AutoQueue) && self.pane_rects.auto_keys.is_some_and(|rect| rect.contains(pos)) {
+            self.game_state.current_pane = ModuleId::Upgrade;
+        } else if self.is_module_active(ModuleId::AutoQueue) && self.pane_rects.auto_keys.is_some_and(|rect| rect.contains(pos)) {
             self.game_state.window_x = 1;
             self.game_state.window_y = 0;
-            self.game_state.current_pane = WindowPanes::AutoPane;
-        } else if self.is_module_active(AppModule::Graph) && self.pane_rects.graph.is_some_and(|rect| rect.contains(pos)) {
-            self.game_state.current_pane = WindowPanes::GraphPane;
+            self.game_state.current_pane = ModuleId::AutoQueue;
+        } else if self.is_module_active(ModuleId::Graph) && self.pane_rects.graph.is_some_and(|rect| rect.contains(pos)) {
+            self.game_state.current_pane = ModuleId::Graph;
         }
     }
 
@@ -354,7 +363,7 @@ impl Game {
         let upgrade_cost = &upgrade.costs[level];
         if self.game_state.money >= *upgrade_cost || *upgrade_cost == BigDollar::from(0) {
             self.decrement_money(*upgrade_cost);
-            (upgrade.on_buy)(&mut self.game_state);
+            (upgrade.on_buy)(self);
             if !upgrade.infinite {
                 *self.game_state.upgrade_levels.entry(upgrade_id).or_insert(0) += 1;
             }
@@ -381,14 +390,17 @@ impl Game {
 
     fn dispatch_pane_input(&mut self, key: KeyCode) {
         match self.game_state.current_pane {
-            WindowPanes::TextPane if self.is_module_active(AppModule::Text) => {
+            ModuleId::Text if self.is_module_active(ModuleId::Text) => {
                 <TextPane as PaneModule>::handle_input(self, key);
             }
-            WindowPanes::UpgradePane if self.is_module_active(AppModule::Upgrade) => {
+            ModuleId::Upgrade if self.is_module_active(ModuleId::Upgrade) => {
                 <UpgradePane as PaneModule>::handle_input(self, key);
             }
-            WindowPanes::AutoPane if self.is_module_active(AppModule::AutoQueue) => {
+            ModuleId::AutoQueue if self.is_module_active(ModuleId::AutoQueue) => {
                 <AutoQueue as PaneModule>::handle_input(self, key);
+            }
+            ModuleId::AutoTyperSelector if self.is_module_active(ModuleId::AutoTyperSelector) => {
+                <AutoTyperSelector as PaneModule>::handle_input(self, key);
             }
             _ => {}
         }
@@ -437,7 +449,7 @@ impl Game {
         self.update_handle_inputs();
         self.handle_tracking(now);
 
-        if self.is_module_active(AppModule::AutoQueue) {
+        if self.is_module_active(ModuleId::AutoQueue) {
             <AutoQueue as PaneModule>::update(self);
         }
     }
@@ -477,7 +489,7 @@ mod tests {
         assert_eq!(loaded.auto_queue.letter_compression_unlocked, false);
         assert_eq!(loaded.base_letter_value, BigDollar::from(0.003));
         assert_eq!(loaded.trust_level, 0);
-        assert_eq!(loaded.current_pane, WindowPanes::TextPane);
+        assert_eq!(loaded.current_pane, ModuleId::Text);
     }
 
     #[test]
@@ -485,10 +497,10 @@ mod tests {
         let (_tx, rx) = crossbeam_channel::unbounded();
         let game = Game::new_with_test_mode(rx, Some(TestMode::auto_queue()));
 
-        assert!(game.is_module_active(AppModule::AutoQueue));
-        assert!(!game.is_module_active(AppModule::Text));
-        assert!(!game.is_module_active(AppModule::Upgrade));
-        assert!(!game.is_module_active(AppModule::MoneyBar));
-        assert_eq!(game.game_state.current_pane, WindowPanes::AutoPane);
+        assert!(game.is_module_active(ModuleId::AutoQueue));
+        assert!(!game.is_module_active(ModuleId::Text));
+        assert!(!game.is_module_active(ModuleId::Upgrade));
+        assert!(!game.is_module_active(ModuleId::MoneyBar));
+        assert_eq!(game.game_state.current_pane, ModuleId::AutoQueue);
     }
 }

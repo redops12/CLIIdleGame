@@ -5,7 +5,8 @@ use serde::{Deserialize, Serialize};
 use strum_macros::EnumIter;
 
 use crate::big_num::BigDollar;
-use crate::game::GameState;
+use crate::game::{Game, GameState};
+use crate::pane_module::ModuleId;
 use crate::text_sources::TextSource;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumIter, PartialOrd, Ord, Serialize, Deserialize)]
@@ -19,6 +20,7 @@ pub enum UpgradeId {
     Graphs,
     LetterCompression,
     DisablePenalty,
+    AutoLetterCount,
 }
 
 pub struct Upgrade {
@@ -28,7 +30,7 @@ pub struct Upgrade {
     pub name: &'static str,
     pub description: &'static str,
     pub upgrade_unlock_condition: fn(&GameState) -> bool,
-    pub on_buy: fn(&mut GameState),
+    pub on_buy: fn(&mut Game),
 }
 
 static UPGRADES: LazyLock<BTreeMap<UpgradeId, Upgrade>> = LazyLock::new(|| {
@@ -43,7 +45,7 @@ static UPGRADES: LazyLock<BTreeMap<UpgradeId, Upgrade>> = LazyLock::new(|| {
                 name: "Writing Skill",
                 description: "Add a 10th more cent per correct letter",
                 upgrade_unlock_condition: |_game| true,
-                on_buy: |game| game.base_letter_value += BigDollar::from(0.001),
+                on_buy: |game| game.game_state.base_letter_value += BigDollar::from(0.001),
             },
         ),
         (
@@ -55,9 +57,9 @@ static UPGRADES: LazyLock<BTreeMap<UpgradeId, Upgrade>> = LazyLock::new(|| {
                 description: "Lose trust to get back to $0",
                 upgrade_unlock_condition: |game| game.money < BigDollar::from(0),
                 on_buy: |game| {
-                    game.total_money_earned += BigDollar::from(0) - game.money;
-                    game.money = BigDollar::from(0);
-                    game.trust_level -= 1;
+                    game.game_state.total_money_earned += BigDollar::from(0) - game.game_state.money;
+                    game.game_state.money = BigDollar::from(0);
+                    game.game_state.trust_level -= 1;
                 },
             },
         ),
@@ -69,7 +71,7 @@ static UPGRADES: LazyLock<BTreeMap<UpgradeId, Upgrade>> = LazyLock::new(|| {
                 name: "Unlock Trust",
                 description: "Profit is multiplied by (1.15)^trust",
                 upgrade_unlock_condition: |game| game.high_water_money >= BigDollar::from(0.15),
-                on_buy: |game| game.streaks_unlocked = true,
+                on_buy: |game| game.game_state.streaks_unlocked = true,
             },
         ),
         (
@@ -81,8 +83,8 @@ static UPGRADES: LazyLock<BTreeMap<UpgradeId, Upgrade>> = LazyLock::new(|| {
                 description: "Capital letters are worth 10x",
                 upgrade_unlock_condition: |game| game.high_water_money >= BigDollar::from(1.0),
                 on_buy: |game| {
-                    game.capital_letter_bonus_unlocked = true;
-                    game.text_pane.current_text = TextSource::IntroCapital;
+                    game.game_state.capital_letter_bonus_unlocked = true;
+                    game.game_state.text_pane.current_text = TextSource::IntroCapital;
                 },
             },
         ),
@@ -94,7 +96,7 @@ static UPGRADES: LazyLock<BTreeMap<UpgradeId, Upgrade>> = LazyLock::new(|| {
                 name: "Let the robots write",
                 description: "Unlock the letter machine",
                 upgrade_unlock_condition: |game| game.high_water_money >= BigDollar::from(1.0),
-                on_buy: |game| game.automation_unlocked = true,
+                on_buy: |game| game.game_state.automation_unlocked = true,
             },
         ),
         (
@@ -105,7 +107,7 @@ static UPGRADES: LazyLock<BTreeMap<UpgradeId, Upgrade>> = LazyLock::new(|| {
                 name: "Seniority",
                 description: "For each level of seniority, 20% lower correctness requirement to gain trust",
                 upgrade_unlock_condition: |game| game.high_water_money >= BigDollar::from(5.0),
-                on_buy: |game| game.seniority_level += 1,
+                on_buy: |game| game.game_state.seniority_level += 1,
             },
         ),
         (
@@ -116,7 +118,7 @@ static UPGRADES: LazyLock<BTreeMap<UpgradeId, Upgrade>> = LazyLock::new(|| {
                 name: "Graphs",
                 description: "Visualize your progress",
                 upgrade_unlock_condition: |game| game.high_water_money >= BigDollar::from(10.0),
-                on_buy: |game| game.graphs_unlocked = true,
+                on_buy: |game| game.game_state.graphs_unlocked = true,
             },
         ),
         (
@@ -127,7 +129,23 @@ static UPGRADES: LazyLock<BTreeMap<UpgradeId, Upgrade>> = LazyLock::new(|| {
                 name: "Letter compression",
                 description: "Lowercase letters are compressed to uppercase letters",
                 upgrade_unlock_condition: |game| game.total_money_earned >= BigDollar::from(50.0) && game.capital_letter_bonus_unlocked,
-                on_buy: |game| game.auto_queue.letter_compression_unlocked = true,
+                on_buy: |game| game.game_state.auto_queue.letter_compression_unlocked = true,
+            },
+        ),
+        (
+            UpgradeId::AutoLetterCount,
+            Upgrade {
+                costs: (0..200)
+                    .map(|i| BigDollar::from(0.2 * (i as f64) * (i as f64) + 1000.0))
+                    .collect(),
+                infinite: false,
+                name: "Auto letter count",
+                description: "The letter machine automatically counts letters for you",
+                upgrade_unlock_condition: |game| game.total_money_earned >= BigDollar::from(50.0) && game.automation_unlocked,
+                on_buy: |game| {
+                    game.game_state.auto_queue.auto_typer_selector.max_auto_typers += 1;
+                    game.add_floating_pane(ModuleId::AutoTyperSelector);
+                },
             },
         ),
         (
@@ -138,7 +156,7 @@ static UPGRADES: LazyLock<BTreeMap<UpgradeId, Upgrade>> = LazyLock::new(|| {
                 name: "Pay off editors",
                 description: "Mistakes no longer cost money",
                 upgrade_unlock_condition: |game| game.total_money_earned >= BigDollar::from(1e6_f64),
-                on_buy: |game| game.disable_penalty = true,
+                on_buy: |game| game.game_state.disable_penalty = true,
             },
         ),
     ])

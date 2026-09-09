@@ -6,9 +6,8 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Frame;
 use serde::{Deserialize, Serialize};
 
-use crate::game::{Game, GameState, WindowPanes};
+use crate::game::Game;
 use crate::pane_module::{focus_border_color, PaneModule};
-use crate::test_mode::{AppModule, TestMode};
 use crate::text_sources::{get_lines_from_source, TextSource};
 
 const GRAY_DIM: Color = Color::Rgb(80, 80, 80);
@@ -127,23 +126,8 @@ impl TextPane {
 }
 
 impl PaneModule for TextPane {
-    fn module_id() -> AppModule {
-        AppModule::Text
-    }
-
-    fn pane_id() -> Option<WindowPanes> {
-        Some(WindowPanes::TextPane)
-    }
-
     fn title() -> &'static str {
         "Text"
-    }
-
-    fn is_unlocked(_state: &GameState, test_mode: Option<&TestMode>) -> bool {
-        match test_mode {
-            Some(tm) => tm.is_active(AppModule::Text),
-            None => true,
-        }
     }
 
     fn main_column_row_constraint() -> Option<Constraint> {

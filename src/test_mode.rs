@@ -1,41 +1,9 @@
 use std::collections::HashSet;
 use std::fmt;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum AppModule {
-    AutoQueue,
-    Text,
-    Upgrade,
-    Graph,
-    MoneyBar,
-}
+use crate::pane_module::ModuleId;
 
-impl AppModule {
-    pub fn parse(s: &str) -> Option<Self> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "auto-queue" | "auto_queue" | "autoqueue" | "queue" | "auto" | "keys" => {
-                Some(Self::AutoQueue)
-            }
-            "text" | "typing" => Some(Self::Text),
-            "upgrade" | "upgrades" | "shop" => Some(Self::Upgrade),
-            "graph" | "graphs" => Some(Self::Graph),
-            "money" | "money-bar" | "money_bar" | "moneybar" => Some(Self::MoneyBar),
-            _ => None,
-        }
-    }
-
-    pub fn name(&self) -> &'static str {
-        match self {
-            Self::AutoQueue => "auto-queue",
-            Self::Text => "text",
-            Self::Upgrade => "upgrade",
-            Self::Graph => "graph",
-            Self::MoneyBar => "money-bar",
-        }
-    }
-}
-
-impl fmt::Display for AppModule {
+impl fmt::Display for ModuleId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.name())
     }
@@ -43,7 +11,7 @@ impl fmt::Display for AppModule {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TestMode {
-    pub active_modules: HashSet<AppModule>,
+    pub active_modules: HashSet<ModuleId>,
 }
 
 impl Default for TestMode {
@@ -54,45 +22,49 @@ impl Default for TestMode {
 
 impl TestMode {
     #[allow(dead_code)]
-    pub fn new(modules: impl IntoIterator<Item = AppModule>) -> Self {
+    pub fn new(modules: impl IntoIterator<Item = ModuleId>) -> Self {
         Self {
             active_modules: modules.into_iter().collect(),
         }
     }
 
-    pub fn single(module: AppModule) -> Self {
+    pub fn single(module: ModuleId) -> Self {
         let mut set = HashSet::new();
         set.insert(module);
         Self { active_modules: set }
     }
 
     pub fn auto_queue() -> Self {
-        Self::single(AppModule::AutoQueue)
+        Self::single(ModuleId::AutoQueue)
     }
 
-    pub fn is_active(&self, module: AppModule) -> bool {
+    pub fn is_active(&self, module: ModuleId) -> bool {
         self.active_modules.contains(&module)
     }
 
-    pub fn is_single_active(&self, module: AppModule) -> bool {
-        self.active_modules.len() == 1 && self.active_modules.contains(&module)
+    pub fn single_active_module(&self) -> Option<ModuleId> {
+        if self.active_modules.len() == 1 {
+            self.active_modules.iter().next().copied()
+        } else {
+            None
+        }
     }
 
     pub fn from_names(names: &[&str]) -> Self {
         let mut modules = HashSet::new();
         for &name in names {
             if name.eq_ignore_ascii_case("all") {
-                modules.insert(AppModule::AutoQueue);
-                modules.insert(AppModule::Text);
-                modules.insert(AppModule::Upgrade);
-                modules.insert(AppModule::Graph);
-                modules.insert(AppModule::MoneyBar);
-            } else if let Some(m) = AppModule::parse(name) {
+                modules.insert(ModuleId::AutoQueue);
+                modules.insert(ModuleId::Text);
+                modules.insert(ModuleId::Upgrade);
+                modules.insert(ModuleId::Graph);
+                modules.insert(ModuleId::MoneyBar);
+            } else if let Some(m) = ModuleId::parse(name) {
                 modules.insert(m);
             }
         }
         if modules.is_empty() {
-            modules.insert(AppModule::AutoQueue);
+            modules.insert(ModuleId::AutoQueue);
         }
         Self {
             active_modules: modules,
@@ -175,38 +147,38 @@ mod tests {
 
     #[test]
     fn test_app_module_parse() {
-        assert_eq!(AppModule::parse("auto-queue"), Some(AppModule::AutoQueue));
-        assert_eq!(AppModule::parse("auto_queue"), Some(AppModule::AutoQueue));
-        assert_eq!(AppModule::parse("keys"), Some(AppModule::AutoQueue));
-        assert_eq!(AppModule::parse("text"), Some(AppModule::Text));
-        assert_eq!(AppModule::parse("upgrade"), Some(AppModule::Upgrade));
-        assert_eq!(AppModule::parse("graph"), Some(AppModule::Graph));
-        assert_eq!(AppModule::parse("money-bar"), Some(AppModule::MoneyBar));
-        assert_eq!(AppModule::parse("unknown"), None);
+        assert_eq!(ModuleId::parse("auto-queue"), Some(ModuleId::AutoQueue));
+        assert_eq!(ModuleId::parse("auto_queue"), Some(ModuleId::AutoQueue));
+        assert_eq!(ModuleId::parse("keys"), Some(ModuleId::AutoQueue));
+        assert_eq!(ModuleId::parse("text"), Some(ModuleId::Text));
+        assert_eq!(ModuleId::parse("upgrade"), Some(ModuleId::Upgrade));
+        assert_eq!(ModuleId::parse("graph"), Some(ModuleId::Graph));
+        assert_eq!(ModuleId::parse("money-bar"), Some(ModuleId::MoneyBar));
+        assert_eq!(ModuleId::parse("unknown"), None);
     }
 
     #[test]
     fn test_test_mode_default_is_auto_queue() {
         let tm = TestMode::default();
-        assert!(tm.is_active(AppModule::AutoQueue));
-        assert!(!tm.is_active(AppModule::Text));
-        assert!(tm.is_single_active(AppModule::AutoQueue));
+        assert!(!tm.is_active(ModuleId::AutoQueue));
+        assert!(!tm.is_active(ModuleId::Text));
+        assert!(tm.single_active_module() != Some(ModuleId::AutoQueue));
     }
 
     #[test]
     fn test_parse_csv() {
         let tm = TestMode::parse_csv("auto-queue,text");
-        assert!(tm.is_active(AppModule::AutoQueue));
-        assert!(tm.is_active(AppModule::Text));
-        assert!(!tm.is_active(AppModule::Upgrade));
-        assert!(!tm.is_single_active(AppModule::AutoQueue));
+        assert!(tm.is_active(ModuleId::AutoQueue));
+        assert!(tm.is_active(ModuleId::Text));
+        assert!(!tm.is_active(ModuleId::Upgrade));
+        assert!(tm.single_active_module() != Some(ModuleId::AutoQueue));
     }
 
     #[test]
     fn test_parse_args_flags() {
         let args = vec!["idle_game".to_string(), "--test".to_string()];
         let tm = parse_test_mode_from_args(&args).unwrap();
-        assert!(tm.is_single_active(AppModule::AutoQueue));
+        assert!(tm.single_active_module() == Some(ModuleId::AutoQueue));
 
         let args = vec![
             "idle_game".to_string(),
@@ -214,14 +186,14 @@ mod tests {
             "auto-queue".to_string(),
         ];
         let tm = parse_test_mode_from_args(&args).unwrap();
-        assert!(tm.is_single_active(AppModule::AutoQueue));
+        assert!(tm.single_active_module() == Some(ModuleId::AutoQueue));
 
         let args = vec![
             "idle_game".to_string(),
             "--test-mode=text".to_string(),
         ];
         let tm = parse_test_mode_from_args(&args).unwrap();
-        assert!(tm.is_single_active(AppModule::Text));
+        assert!(tm.single_active_module() == Some(ModuleId::Text));
 
         let args = vec!["idle_game".to_string()];
         assert_eq!(parse_test_mode_from_args(&args), None);

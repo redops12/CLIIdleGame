@@ -7,9 +7,8 @@ use ratatui::widgets::{Axis, Block, Borders, Chart, Dataset, GraphType};
 use ratatui::Frame;
 
 use crate::big_num::BigDollar;
-use crate::game::{Game, GameState, SECOND_POLL_WINDOW, WindowPanes};
-use crate::pane_module::{focus_border_color, LayoutContext, PaneModule};
-use crate::test_mode::{AppModule, TestMode};
+use crate::game::{Game, SECOND_POLL_WINDOW};
+use crate::pane_module::{focus_border_color, LayoutContext, PaneModule, ModuleId};
 
 const GRAY_MID: Color = Color::Rgb(140, 140, 140);
 
@@ -109,27 +108,12 @@ impl GraphPane {
 }
 
 impl PaneModule for GraphPane {
-    fn module_id() -> AppModule {
-        AppModule::Graph
-    }
-
-    fn pane_id() -> Option<WindowPanes> {
-        Some(WindowPanes::GraphPane)
-    }
-
     fn title() -> &'static str {
         "Graphs"
     }
 
-    fn is_unlocked(state: &GameState, test_mode: Option<&TestMode>) -> bool {
-        match test_mode {
-            Some(tm) => tm.is_active(AppModule::Graph),
-            None => state.graphs_unlocked,
-        }
-    }
-
     fn column_constraint(ctx: &LayoutContext) -> Option<Constraint> {
-        if ctx.has_side_neighbors(AppModule::Graph) {
+        if ctx.has_side_neighbors(ModuleId::Graph) {
             Some(Constraint::Length(SECOND_POLL_WINDOW as u16 * 2 + 2))
         } else {
             Some(Constraint::Fill(1))

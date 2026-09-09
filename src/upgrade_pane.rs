@@ -6,9 +6,8 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Frame;
 
 use crate::big_num::BigDollar;
-use crate::game::{Game, GameState, UPGRADE_KEYS, WindowPanes};
+use crate::game::{Game, UPGRADE_KEYS};
 use crate::pane_module::{focus_border_color, PaneModule};
-use crate::test_mode::{AppModule, TestMode};
 use crate::upgrade::get_upgrades;
 
 const GRAY_MID: Color = Color::Rgb(140, 140, 140);
@@ -122,23 +121,8 @@ impl UpgradePane {
 }
 
 impl PaneModule for UpgradePane {
-    fn module_id() -> AppModule {
-        AppModule::Upgrade
-    }
-
-    fn pane_id() -> Option<WindowPanes> {
-        Some(WindowPanes::UpgradePane)
-    }
-
     fn title() -> &'static str {
         "Upgrades"
-    }
-
-    fn is_unlocked(_state: &GameState, test_mode: Option<&TestMode>) -> bool {
-        match test_mode {
-            Some(tm) => tm.is_active(AppModule::Upgrade),
-            None => true,
-        }
     }
 
     fn main_column_row_constraint() -> Option<Constraint> {

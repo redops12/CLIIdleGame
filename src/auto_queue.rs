@@ -1,6 +1,6 @@
-use std::collections::{HashMap};
+use std::collections::HashMap;
 
-use crossterm::event::{KeyCode};
+use crossterm::event::KeyCode;
 use ratatui::layout::{Constraint, Rect};
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
@@ -9,22 +9,24 @@ use ratatui::Frame;
 use serde::{Deserialize, Serialize};
 use serde_big_array::BigArray;
 
-use crate::game::{Game, GameState, WindowPanes};
-use crate::pane_module::{focus_border_color, LayoutContext, PaneModule};
-use crate::test_mode::{AppModule, TestMode};
+use crate::auto_typer_selector::AutoTyperSelector;
+use crate::game::Game;
+use crate::pane_module::{focus_border_color, LayoutContext, PaneModule, ModuleId};
 use crate::text_sources::{get_lines_from_source, TextSource};
 
-pub const NUM_LETTERS: usize = 26;
-pub const MAX_LINE_LENGTH: usize = 40;
-pub const LETTER_QUEUE_LEN: usize = 10;
+pub const NUM_LETTERS: usize            = 26;
+pub const MAX_LINE_LENGTH: usize        = 40;
+pub const LETTER_QUEUE_LEN: usize       = 10;
 pub const QUEUE_MOVED_PER_UPDATE: usize = 2;
+
+const READY_DELAY: u128   = 0;
+const SORTING_DELAY: u128 = 100;
+const QUEUING_DELAY: u128 = 300;
+const QUEUE_DELAY: u128   = 50;
+const LETTER_INCREMENT_DELAY: u128 = 2000;
 
 pub fn idx_to_letter(idx: usize) -> char {
     (b'a' + idx as u8) as char
-}
-
-pub fn idx_to_upper_letter(idx: usize) -> char {
-    (b'A' + idx as u8) as char
 }
 
 pub fn count_color(count: u32) -> Color {
@@ -35,16 +37,6 @@ pub fn count_color(count: u32) -> Color {
     } else {
         Color::Green
     }
-}
-
-/// One char per column with a single space between: `a b c ...` → `cols * 2 - 1`.
-pub fn auto_row_width(cols: usize) -> usize {
-    cols * 2 - 1
-}
-
-/// Pane width: content plus left/right borders.
-pub fn auto_pane_width(cols: usize) -> u16 {
-    (auto_row_width(cols) + 2) as u16
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -65,14 +57,15 @@ pub struct AutoQueue {
     pub letter_compression_unlocked: bool,
     phase: SorterPhase,
     line_num: usize,
-    ready_delay: u128,
-    sorting_delay: u128,
-    queuing_delay: u128,
-    queue_delay: u128,
     #[serde(skip)]
     last_sorter_update: std::time::Instant,
     #[serde(skip)]
     last_queue_update: std::time::Instant,
+    #[serde(skip)]
+    last_letter_increment: std::time::Instant,
+
+    #[serde(flatten)]
+    pub auto_typer_selector: AutoTyperSelector,
 }
 
 impl Default for AutoQueue {
@@ -85,35 +78,83 @@ impl Default for AutoQueue {
             letter_compression_unlocked: false,
             phase: SorterPhase::Ready,
             line_num: 0,
-            ready_delay: 0,
-            sorting_delay: 100,
-            queuing_delay: 300,
-            queue_delay: 50,
             last_sorter_update: std::time::Instant::now(),
             last_queue_update: std::time::Instant::now(),
+            last_letter_increment: std::time::Instant::now(),
+            auto_typer_selector: AutoTyperSelector::default(),
         }
     }
 }
 
 impl AutoQueue {
     pub fn pane_width() -> u16 {
-        auto_pane_width(NUM_LETTERS)
+        MAX_LINE_LENGTH as u16 + LETTER_QUEUE_LEN as u16 + 2 + 1 + 1 + 4 // content + borders + letter +
+                                                                     // count + spaces
     }
 
     pub fn get_letter_counts(&self, letter: char) -> u32 {
         *self.letter_counts.get(&letter).unwrap_or(&0)
     }
 
+    pub fn increment_letter_count(&mut self, letter: char, count: u32) {
+        let entry = self.letter_counts.entry(letter).or_insert(0);
+        *entry = (*entry + count).min(999);
+    }
+
     pub fn handle_input(&mut self, key: KeyCode) {
         if let KeyCode::Char(c) = key {
-            *self.letter_counts.entry(c).or_insert(0) += 1;
+            self.increment_letter_count(c.to_ascii_lowercase(), 1);
+        }
+    }
+
+    fn increment_letter_counts(&mut self) {
+        if self.last_letter_increment.elapsed().as_millis() < LETTER_INCREMENT_DELAY {
+            return;
+        }
+        self.last_letter_increment = std::time::Instant::now();
+        let to_add: Vec<(char, u32)> = self.auto_typer_selector.auto_typer_counts.iter().map(|(letter, count)| (*letter, *count)).collect();
+        for (letter, count) in to_add {
+            self.increment_letter_count(letter.clone(), count.clone());
+        }
+    }
+
+    fn process_letter_queue(&mut self) -> String {
+        let mut processed = String::new();
+        for j in 0..NUM_LETTERS {
+            let letter = idx_to_letter(j);
+            if  self.letter_queue[MAX_LINE_LENGTH + LETTER_QUEUE_LEN - 1][j] == letter &&
+                *self.letter_counts.get(&letter).unwrap_or(&0) > 0
+            {
+                processed.push(letter);
+                self.letter_queue[MAX_LINE_LENGTH + LETTER_QUEUE_LEN - 1][j] = ' ';
+                *self.letter_counts.entry(letter).or_insert(1) -= 1;
+            }
+        }
+
+        processed
+    }
+
+    fn run_queue(&mut self) {
+        if self.last_queue_update.elapsed().as_millis() < QUEUE_DELAY {
+            return;
+        }
+        self.last_queue_update = std::time::Instant::now();
+
+        // move letters to the right putting one letter in the letter queue
+        for i in (MAX_LINE_LENGTH..MAX_LINE_LENGTH + LETTER_QUEUE_LEN).rev() {
+            for j in 0..NUM_LETTERS {
+                if self.letter_queue[i][j] == ' ' {
+                    self.letter_queue[i][j] = self.letter_queue[i - 1][j];
+                    self.letter_queue[i - 1][j] = ' ';
+                }
+            }
         }
     }
 
     fn run_sorter(&mut self) {
         match self.phase {
             SorterPhase::Ready => {
-                if self.last_sorter_update.elapsed().as_millis() < self.ready_delay {
+                if self.last_sorter_update.elapsed().as_millis() < READY_DELAY {
                     return;
                 }
                 self.last_sorter_update = std::time::Instant::now();
@@ -131,7 +172,7 @@ impl AutoQueue {
                 self.auto_current_line += 1;
             }
             SorterPhase::Sorting => {
-                if self.last_sorter_update.elapsed().as_millis() < self.sorting_delay {
+                if self.last_sorter_update.elapsed().as_millis() < SORTING_DELAY {
                     return;
                 }
                 self.last_sorter_update = std::time::Instant::now();
@@ -153,7 +194,7 @@ impl AutoQueue {
                 self.line_num += 1;
             }
             SorterPhase::Queueing => {
-                if self.last_sorter_update.elapsed().as_millis() < self.queuing_delay {
+                if self.last_sorter_update.elapsed().as_millis() < QUEUING_DELAY {
                     return;
                 }
                 self.last_sorter_update = std::time::Instant::now();
@@ -180,42 +221,10 @@ impl AutoQueue {
         }
     }
 
-    fn process_letter_queue(&mut self) -> String {
-        let mut processed = String::new();
-        for j in 0..NUM_LETTERS {
-            let letter = idx_to_letter(j);
-            if  self.letter_queue[MAX_LINE_LENGTH + LETTER_QUEUE_LEN - 1][j] == letter &&
-                *self.letter_counts.get(&letter).unwrap_or(&0) > 0
-            {
-                processed.push(letter);
-                self.letter_queue[MAX_LINE_LENGTH + LETTER_QUEUE_LEN - 1][j] = ' ';
-                *self.letter_counts.entry(letter).or_insert(1) -= 1;
-            }
-        }
-
-        processed
-    }
-
-    fn run_queue(&mut self) {
-        if self.last_queue_update.elapsed().as_millis() < self.queue_delay {
-            return;
-        }
-        self.last_queue_update = std::time::Instant::now();
-
-        // move letters to the right putting one letter in the letter queue
-        for i in (MAX_LINE_LENGTH..MAX_LINE_LENGTH + LETTER_QUEUE_LEN).rev() {
-            for j in 0..NUM_LETTERS {
-                if self.letter_queue[i][j] == ' ' {
-                    self.letter_queue[i][j] = self.letter_queue[i - 1][j];
-                    self.letter_queue[i - 1][j] = ' ';
-                }
-            }
-        }
-    }
-
     pub fn update(
         &mut self,
     ) -> String {
+        self.increment_letter_counts();
         let processed = self.process_letter_queue();
 
         self.run_queue();
@@ -277,27 +286,12 @@ impl AutoQueue {
 }
 
 impl PaneModule for AutoQueue {
-    fn module_id() -> AppModule {
-        AppModule::AutoQueue
-    }
-
-    fn pane_id() -> Option<WindowPanes> {
-        Some(WindowPanes::AutoPane)
-    }
-
     fn title() -> &'static str {
         "Keys"
     }
 
-    fn is_unlocked(state: &GameState, test_mode: Option<&TestMode>) -> bool {
-        match test_mode {
-            Some(tm) => tm.is_active(AppModule::AutoQueue),
-            None => state.automation_unlocked,
-        }
-    }
-
     fn column_constraint(ctx: &LayoutContext) -> Option<Constraint> {
-        if ctx.has_side_neighbors(AppModule::AutoQueue) {
+        if ctx.has_side_neighbors(ModuleId::AutoQueue) {
             Some(Constraint::Length(Self::pane_width()))
         } else {
             Some(Constraint::Fill(1))

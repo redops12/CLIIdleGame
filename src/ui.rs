@@ -1,12 +1,13 @@
 use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::widgets::Clear;
 use ratatui::Frame;
 
 use crate::auto_queue::AutoQueue;
-use crate::game::{Game, PaneRects, WindowPanes};
+use crate::auto_typer_selector::AutoTyperSelector;
+use crate::game::{Game, PaneRects};
 use crate::graph_pane::GraphPane;
 use crate::money_bar::MoneyBar;
-use crate::pane_module::{LayoutContext, PaneModule};
-use crate::test_mode::AppModule;
+use crate::pane_module::{LayoutContext, PaneModule, ModuleId};
 use crate::text_pane::TextPane;
 use crate::upgrade_pane::UpgradePane;
 
@@ -107,35 +108,37 @@ pub fn compute_pane_layout(area: Rect, game: &Game) -> PaneRects {
     }
 }
 
+fn compute_floating_area(whole: Rect) -> Rect {
+    let [_, rect, _] = Layout::vertical([Constraint::Percentage(20), Constraint::Percentage(60), Constraint::Percentage(20)]).areas(whole);
+    let [_, rect2, _] = Layout::horizontal([Constraint::Percentage(20), Constraint::Percentage(60), Constraint::Percentage(20)]).areas(rect);
+    return rect2;
+}
+
 fn render_pane(
     frame: &mut Frame,
     game: &Game,
-    module: AppModule,
+    module: ModuleId,
     area: Rect,
 ) {
     if area.width == 0 || area.height == 0 {
         return;
     }
 
-    let focused = match module {
-        AppModule::Text => game.game_state.current_pane == WindowPanes::TextPane,
-        AppModule::Upgrade => game.game_state.current_pane == WindowPanes::UpgradePane,
-        AppModule::AutoQueue => game.game_state.current_pane == WindowPanes::AutoPane,
-        AppModule::Graph => game.game_state.current_pane == WindowPanes::GraphPane,
-        AppModule::MoneyBar => false,
-    };
+    let focused = game.game_state.current_pane == module;
 
     match module {
-        AppModule::Text => TextPane::render(frame, area, game, focused),
-        AppModule::Upgrade => UpgradePane::render(frame, area, game, focused),
-        AppModule::AutoQueue => AutoQueue::render(frame, area, game, focused),
-        AppModule::Graph => GraphPane::render(frame, area, game, focused),
-        AppModule::MoneyBar => MoneyBar::render(frame, area, game, focused),
+        ModuleId::Text => TextPane::render(frame, area, game, focused),
+        ModuleId::Upgrade => UpgradePane::render(frame, area, game, focused),
+        ModuleId::AutoQueue => AutoQueue::render(frame, area, game, focused),
+        ModuleId::Graph => GraphPane::render(frame, area, game, focused),
+        ModuleId::MoneyBar => MoneyBar::render(frame, area, game, focused),
+        ModuleId::AutoTyperSelector => AutoTyperSelector::render(frame, area, game, focused),
+
     }
 }
 
 pub fn ui(frame: &mut Frame, game: &Game) -> PaneRects {
-    let main_area = if game.is_module_active(AppModule::MoneyBar) {
+    let main_area = if game.is_module_active(ModuleId::MoneyBar) {
         let [money_rect, rest] = Layout::vertical([
             MoneyBar::height_constraint(),
             Constraint::Min(0),
@@ -149,24 +152,30 @@ pub fn ui(frame: &mut Frame, game: &Game) -> PaneRects {
 
     let pane_rects = compute_pane_layout(main_area, game);
 
-    if game.is_module_active(AppModule::Upgrade) {
-        render_pane(frame, game, AppModule::Upgrade, pane_rects.upgrade);
+    if game.is_module_active(ModuleId::Upgrade) {
+        render_pane(frame, game, ModuleId::Upgrade, pane_rects.upgrade);
     }
 
-    if game.is_module_active(AppModule::Text) {
-        render_pane(frame, game, AppModule::Text, pane_rects.text);
+    if game.is_module_active(ModuleId::Text) {
+        render_pane(frame, game, ModuleId::Text, pane_rects.text);
     }
 
-    if game.is_module_active(AppModule::AutoQueue) {
+    if game.is_module_active(ModuleId::AutoQueue) {
         if let Some(auto_rect) = pane_rects.auto_keys {
-            render_pane(frame, game, AppModule::AutoQueue, auto_rect);
+            render_pane(frame, game, ModuleId::AutoQueue, auto_rect);
         }
     }
 
-    if game.is_module_active(AppModule::Graph) {
+    if game.is_module_active(ModuleId::Graph) {
         if let Some(graph_rect) = pane_rects.graph {
-            render_pane(frame, game, AppModule::Graph, graph_rect);
+            render_pane(frame, game, ModuleId::Graph, graph_rect);
         }
+    }
+
+    if let Some(floating_pane_id) = game.get_floating_pane() {
+        let floating_area = compute_floating_area(frame.area());
+        frame.render_widget(Clear, floating_area);
+        render_pane(frame, game, floating_pane_id, floating_area);
     }
 
     pane_rects
