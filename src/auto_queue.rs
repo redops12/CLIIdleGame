@@ -55,6 +55,8 @@ pub struct AutoQueue {
     #[serde(with = "BigArray")]
     pub letter_queue: [[char; NUM_LETTERS]; MAX_LINE_LENGTH + LETTER_QUEUE_LEN],
     pub letter_compression_unlocked: bool,
+    pub auto_queue_speedup: u32,
+
     phase: SorterPhase,
     line_num: usize,
     #[serde(skip)]
@@ -76,6 +78,7 @@ impl Default for AutoQueue {
             letter_counts: HashMap::new(),
             letter_queue: [[' '; NUM_LETTERS]; MAX_LINE_LENGTH + LETTER_QUEUE_LEN],
             letter_compression_unlocked: false,
+            auto_queue_speedup: 1,
             phase: SorterPhase::Ready,
             line_num: 0,
             last_sorter_update: std::time::Instant::now(),
@@ -139,7 +142,7 @@ impl AutoQueue {
     }
 
     fn run_queue(&mut self) {
-        if self.last_queue_update.elapsed().as_millis() < QUEUE_DELAY {
+        if self.last_queue_update.elapsed().as_millis() < QUEUE_DELAY / self.auto_queue_speedup as u128 {
             return;
         }
         self.last_queue_update = std::time::Instant::now();
@@ -158,7 +161,7 @@ impl AutoQueue {
     fn run_sorter(&mut self) {
         match self.phase {
             SorterPhase::Ready => {
-                if self.last_sorter_update.elapsed().as_millis() < READY_DELAY {
+                if self.last_sorter_update.elapsed().as_millis() < READY_DELAY / self.auto_queue_speedup as u128 {
                     return;
                 }
                 self.last_sorter_update = std::time::Instant::now();
@@ -176,7 +179,7 @@ impl AutoQueue {
                 self.auto_current_line += 1;
             }
             SorterPhase::Sorting => {
-                if self.last_sorter_update.elapsed().as_millis() < SORTING_DELAY {
+                if self.last_sorter_update.elapsed().as_millis() < SORTING_DELAY / self.auto_queue_speedup as u128 {
                     return;
                 }
                 self.last_sorter_update = std::time::Instant::now();
@@ -198,7 +201,7 @@ impl AutoQueue {
                 self.line_num += 1;
             }
             SorterPhase::Queueing => {
-                if self.last_sorter_update.elapsed().as_millis() < QUEUING_DELAY {
+                if self.last_sorter_update.elapsed().as_millis() < QUEUING_DELAY / self.auto_queue_speedup as u128 {
                     return;
                 }
                 self.last_sorter_update = std::time::Instant::now();

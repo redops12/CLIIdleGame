@@ -21,6 +21,7 @@ pub enum UpgradeId {
     LetterCompression,
     DisablePenalty,
     AutoLetterCount,
+    AutoQueueSpeedup,
 }
 
 pub struct Upgrade {
@@ -128,7 +129,7 @@ static UPGRADES: LazyLock<BTreeMap<UpgradeId, Upgrade>> = LazyLock::new(|| {
                 infinite: false,
                 name: "Letter compression",
                 description: "Lowercase letters are compressed to uppercase letters",
-                upgrade_unlock_condition: |game| game.total_money_earned >= BigDollar::from(50.0) && game.capital_letter_bonus_unlocked,
+                upgrade_unlock_condition: |game| game.total_money_earned >= BigDollar::from(100.0) && game.capital_letter_bonus_unlocked,
                 on_buy: |game| game.game_state.auto_queue.letter_compression_unlocked = true,
             },
         ),
@@ -140,13 +141,24 @@ static UPGRADES: LazyLock<BTreeMap<UpgradeId, Upgrade>> = LazyLock::new(|| {
                     .collect(),
                 infinite: false,
                 name: "Auto letter count",
-                description: "The letter machine automatically counts letters for you",
-                upgrade_unlock_condition: |game| game.total_money_earned >= BigDollar::from(50.0) && game.automation_unlocked,
+                description: "The letter machine automatically types letters for you",
+                upgrade_unlock_condition: |game| game.total_money_earned >= BigDollar::from(200.0) && game.automation_unlocked,
                 on_buy: |game| {
                     game.game_state.auto_queue.auto_typer_selector.max_auto_typers += 1;
                     game.add_floating_pane(ModuleId::AutoTyperSelector);
                 },
             },
+        ),
+        (
+            UpgradeId::AutoQueueSpeedup,
+            Upgrade {
+                costs: vec![BigDollar::from(100000.0)],
+                infinite: false,
+                name: "Faster Sorter",
+                description: "Speed up the letter machine 5x",
+                upgrade_unlock_condition: |game| game.total_money_earned >= BigDollar::from(50000.0) && game.automation_unlocked,
+                on_buy: |game| game.game_state.auto_queue.auto_queue_speedup = 5,
+            }
         ),
         (
             UpgradeId::DisablePenalty,
