@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, BTreeMap};
 use std::io;
 use std::path::Path;
 
@@ -76,7 +76,7 @@ impl Default for GameState {
         Self {
             text_pane: TextPane::default(),
             auto_queue: AutoQueue::default(),
-            money: BigDollar::from(30.0),
+            money: BigDollar::from(0.0),
             high_water_money: BigDollar::from(0),
             total_money_earned: BigDollar::from(30.0),
             five_second_profit_buckets: vec![BigDollar::from(0); NUM_POLLS + 1],
@@ -106,6 +106,8 @@ pub struct Game {
     pub should_quit: bool,
     pub pane_rects: PaneRects,
 
+    pub now: std::time::Instant,
+    pub first_purchaseable_time: BTreeMap<UpgradeId, std::time::Instant>,
     pub last_profit_time: std::time::Instant,
     pub test_mode: Option<TestMode>,
     pub floating_pane_queue: Vec<ModuleId>,
@@ -136,6 +138,8 @@ impl Game {
             input_rx,
             should_quit: false,
             pane_rects: PaneRects::default(),
+            now: std::time::Instant::now(),
+            first_purchaseable_time: BTreeMap::new(),
             last_profit_time: std::time::Instant::now(),
             test_mode,
             floating_pane_queue: Vec::new(),
@@ -451,7 +455,26 @@ impl Game {
         }
     }
 
+    fn handle_animations(&mut self) {
+        for kind in self.get_displayed_upgrades().iter() {
+
+            let upgrade = get_upgrades().get(kind).unwrap();
+            let level = self.game_state.upgrade_levels.get(kind).copied().unwrap_or(0);
+            let cost: BigDollar = upgrade
+                .costs
+                .get(level)
+                .copied()
+                .unwrap_or(BigDollar::from(0));
+
+            if self.game_state.money >= cost || cost == BigDollar::from(0) {
+                self.first_purchaseable_time.entry(*kind).or_insert(self.now);
+            }
+        }
+    }
+
     pub fn update(&mut self, now: std::time::Instant) {
+        self.now = now;
+        self.handle_animations();
         self.update_handle_inputs();
         self.handle_tracking(now);
 

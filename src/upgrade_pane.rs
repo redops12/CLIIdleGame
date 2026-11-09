@@ -24,6 +24,21 @@ struct UpgradeRow {
     can_buy: bool,
 }
 
+fn duration_flash_animation(t: std::time::Duration) -> Color {
+    let ms = t.as_millis();
+    let on = (80..130).contains(&ms)
+        || (280..340).contains(&ms)
+        || (480..560).contains(&ms)
+        || (620..700).contains(&ms)
+        || (740..820).contains(&ms)
+        || ms >= 860;
+    if on {
+        Color::Green
+    } else {
+        GRAY_MID
+    }
+}
+
 impl UpgradePane {
     fn render_lines(game: &Game) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
@@ -40,8 +55,11 @@ impl UpgradePane {
                 .unwrap_or(BigDollar::from(0));
             let button = UPGRADE_KEYS.get(i).copied().unwrap_or('?');
             let can_buy = game.game_state.money >= cost || cost == BigDollar::from(0);
+
             let color = if can_buy {
-                Color::Green
+                let purchasable_time = game.first_purchaseable_time.get(kind).copied().unwrap_or(game.now);
+
+                duration_flash_animation(game.now - purchasable_time)
             } else {
                 GRAY_MID
             };
